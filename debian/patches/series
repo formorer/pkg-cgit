@@ -2,3 +2,4 @@
 # are applied to the upstream source in the order listed below.
 # This is manually managed by users with dquilt (quilt(1) wrapper) etc.
 # Also this may be updated by dpkg-source(1) when making a package.
+debianize_makefile
