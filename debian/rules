@@ -17,19 +17,24 @@ include /usr/share/dpkg/default.mk
 #export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
 
 
+b := $(shell pwd)/debian/cgit/
+
 # main packaging script based on dh7 syntax
 %:
 	dh $@ 
 
-# debmake generated override targets
-# See dpkg-architecture(1) to set multiarch path as needed.
-#DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
-#
-# This is example for Cmake (See http://bugs.debian.org/641051 )
-#override_dh_auto_configure:
-#	dh_auto_configure -- \
-#	-DCMAKE_LIBRARY_PATH=$(DEB_HOST_MULTIARCH)
+override_dh_auto_clean:
+	dh_auto_clean
+	make cleanall
+	-rm tests/test-results/*.counts
+	-rm -rf .depend
+	-rm cgitrc.5 
 
+override_dh_auto_build:
+	dh_auto_build
+	a2x -f manpage cgitrc.5.txt
 
-
+override_dh_auto_install:
+	dh_auto_install
+	mv $b/usr/share/cgit/cgit.cgi $b/usr/lib/cgit
 
