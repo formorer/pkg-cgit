@@ -38,3 +38,6 @@ override_dh_auto_install:
 	dh_auto_install
 	mv $b/usr/share/cgit/cgit.cgi $b/usr/lib/cgit
 
+override_dh_auto_test:
+	chmod +x tests/*.sh
+	dh_auto_test
