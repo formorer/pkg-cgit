@@ -1,5 +1,13 @@
-cgit (0.10.2.git2.0.1-1) UNRELEASED; urgency=low
+cgit (0.10.2.git2.0.1-2) unstable; urgency=medium
+
+  [ Nicolas Dandrimont ]
+  * [c7b31d2] Return a 404 status code when a repo doesn't exist
+  * [c8837ea] Add missing b-d for tests
+
+ -- Alexander Wirt <formorer@debian.org>  Fri, 01 Aug 2014 06:58:39 +0200
+
+cgit (0.10.2.git2.0.1-1) unstable; urgency=low
 
   * Initial packaging.
 
- -- Alexander Wirt <formorer@debian.org>  Sun, 20 Jul 2014 07:56:27 +0200
+ -- Alexander Wirt <formorer@debian.org>  Fri, 01 Aug 2014 06:58:19 +0200
