@@ -4,7 +4,7 @@ Source: <http://git.zx2c4.com/cgit/about/>
 
 Files: *
 Copyright: © 2006-2014 cgit Development Team <cgit@lists.zx2c4.com>
-License: GPL-2 
+License: GPL-2
 
 Files: debian/*
 Copyright: © 2014 Alexander Wirt <formorer@debian.org>

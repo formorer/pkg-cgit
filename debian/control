@@ -2,14 +2,25 @@ Source: cgit
 Section: net
 Priority: extra
 Maintainer: Alexander Wirt <formorer@debian.org>
-Build-Depends: debhelper (>=9), liblua5.1-0-dev, libssl-dev, pkg-config, libxml2-utils, tidy, unzip, git, asciidoc, xmlto, docbook-xsl, dh-apache2
+Build-Depends: asciidoc,
+               debhelper (>=9),
+               dh-apache2,
+               docbook-xsl,
+               git,
+               liblua5.1-0-dev,
+               libssl-dev,
+               libxml2-utils,
+               pkg-config,
+               tidy,
+               unzip,
+               xmlto
 Standards-Version: 3.9.5
 Homepage: http://git.zx2c4.com/cgit/
 
 Package: cgit
 Architecture: any
 Multi-Arch: foreign
-Depends: ${misc:Depends}, ${shlibs:Depends}, ${python:Depends}
+Depends: ${misc:Depends}, ${python:Depends}, ${shlibs:Depends}
 Recommends: python, ${misc:Recommends}
 Description: hyperfast web frontend for git repositories written in C
  This is an attempt to create a fast web interface for the Git SCM, using a
