@@ -1,1 +1,2 @@
 cgit source: python-depends-but-no-python-helper cgit
+cgit source: missing-build-dependency-for-dh-addon apache2 => apache2-dev
