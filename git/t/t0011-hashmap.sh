@@ -237,17 +237,4 @@ test_expect_success 'grow / shrink' '
 
 '
 
-test_expect_success 'string interning' '
-
-test_hashmap "intern value1
-intern Value1
-intern value2
-intern value2
-" "value1
-Value1
-value2
-value2"
-
-'
-
 test_done

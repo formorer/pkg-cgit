@@ -53,9 +53,6 @@ grep.extendedRegexp::
 	option is ignored when the 'grep.patternType' option is set to a value
 	other than 'default'.
 
-grep.fullName::
-	If set to true, enable '--full-name' option by default.
-
 
 OPTIONS
 -------

@@ -231,8 +231,7 @@ static int parse_long_opt(struct parse_opt_ctx_t *p, const char *arg,
 			continue;
 
 again:
-		if (!skip_prefix(arg, long_name, &rest))
-			rest = NULL;
+		rest = skip_prefix(arg, long_name);
 		if (options->type == OPTION_ARGUMENT) {
 			if (!rest)
 				continue;
@@ -281,13 +280,12 @@ is_abbreviated:
 				continue;
 			}
 			flags |= OPT_UNSET;
-			if (!skip_prefix(arg + 3, long_name, &rest)) {
-				/* abbreviated and negated? */
-				if (starts_with(long_name, arg + 3))
-					goto is_abbreviated;
-				else
-					continue;
-			}
+			rest = skip_prefix(arg + 3, long_name);
+			/* abbreviated and negated? */
+			if (!rest && starts_with(long_name, arg + 3))
+				goto is_abbreviated;
+			if (!rest)
+				continue;
 		}
 		if (*rest) {
 			if (*rest != '=')

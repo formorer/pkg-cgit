@@ -5,11 +5,8 @@
 #include <pthread.h>
 #endif
 
-#include "argv-array.h"
-
 struct child_process {
 	const char **argv;
-	struct argv_array args;
 	pid_t pid;
 	/*
 	 * Using .in, .out, .err:

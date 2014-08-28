@@ -44,9 +44,7 @@ test_expect_success 'creating initial files and commits' '
 
 	echo "1st line 2nd file" >secondfile &&
 	echo "2nd line 2nd file" >>secondfile &&
-	# "git commit -m" would break MinGW, as Windows refuse to pass
-	# $test_encoding encoded parameter to git.
-	commit_msg $test_encoding | git -c "i18n.commitEncoding=$test_encoding" commit -a -F - &&
+	git -c "i18n.commitEncoding=$test_encoding" commit -a -m "$(commit_msg $test_encoding)" &&
 	head5=$(git rev-parse --verify HEAD)
 '
 # git log --pretty=oneline # to see those SHA1 involved
@@ -336,9 +334,7 @@ test_expect_success 'redoing the last two commits should succeed' '
 
 	echo "1st line 2nd file" >secondfile &&
 	echo "2nd line 2nd file" >>secondfile &&
-	# "git commit -m" would break MinGW, as Windows refuse to pass
-	# $test_encoding encoded parameter to git.
-	commit_msg $test_encoding | git -c "i18n.commitEncoding=$test_encoding" commit -a -F - &&
+	git -c "i18n.commitEncoding=$test_encoding" commit -a -m "$(commit_msg $test_encoding)" &&
 	check_changes $head5
 '
 

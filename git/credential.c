@@ -40,7 +40,8 @@ static int credential_config_callback(const char *var, const char *value,
 	struct credential *c = data;
 	const char *key, *dot;
 
-	if (!skip_prefix(var, "credential.", &key))
+	key = skip_prefix(var, "credential.");
+	if (!key)
 		return 0;
 
 	if (!value)

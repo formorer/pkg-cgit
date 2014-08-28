@@ -278,7 +278,7 @@ static struct option builtin_rm_options[] = {
 
 int cmd_rm(int argc, const char **argv, const char *prefix)
 {
-	int i;
+	int i, newfd;
 	struct pathspec pathspec;
 	char *seen;
 
@@ -293,7 +293,7 @@ int cmd_rm(int argc, const char **argv, const char *prefix)
 	if (!index_only)
 		setup_work_tree();
 
-	hold_locked_index(&lock_file, 1);
+	newfd = hold_locked_index(&lock_file, 1);
 
 	if (read_cache() < 0)
 		die(_("index file corrupt"));
@@ -427,7 +427,8 @@ int cmd_rm(int argc, const char **argv, const char *prefix)
 	}
 
 	if (active_cache_changed) {
-		if (write_locked_index(&the_index, &lock_file, COMMIT_LOCK))
+		if (write_cache(newfd, active_cache, active_nr) ||
+		    commit_locked_index(&lock_file))
 			die(_("Unable to write new index file"));
 	}
 

@@ -138,12 +138,19 @@ int git_config_include(const char *var, const char *value, void *data)
 	if (ret < 0)
 		return ret;
 
-	if (!skip_prefix(var, "include.", &type))
+	type = skip_prefix(var, "include.");
+	if (!type)
 		return ret;
 
 	if (!strcmp(type, "path"))
 		ret = handle_path_include(value, inc);
 	return ret;
+}
+
+static void lowercase(char *p)
+{
+	for (; *p; p++)
+		*p = tolower(*p);
 }
 
 void git_config_push_parameter(const char *text)
@@ -173,7 +180,7 @@ int git_config_parse_parameter(const char *text,
 		strbuf_list_free(pair);
 		return error("bogus config parameter: %s", text);
 	}
-	strbuf_tolower(pair[0]);
+	lowercase(pair[0]->buf);
 	if (fn(pair[0]->buf, pair[1] ? pair[1]->buf : NULL, data) < 0) {
 		strbuf_list_free(pair);
 		return -1;
@@ -817,16 +824,11 @@ static int git_default_core_config(const char *var, const char *value)
 		return git_config_string(&editor_program, var, value);
 
 	if (!strcmp(var, "core.commentchar")) {
-		if (!value)
-			return config_error_nonbool(var);
-		else if (!strcasecmp(value, "auto"))
-			auto_comment_line_char = 1;
-		else if (value[0] && !value[1]) {
-			comment_line_char = value[0];
-			auto_comment_line_char = 0;
-		} else
-			return error("core.commentChar should only be one character");
-		return 0;
+		const char *comment;
+		int ret = git_config_string(&comment, var, value);
+		if (!ret)
+			comment_line_char = comment[0];
+		return ret;
 	}
 
 	if (!strcmp(var, "core.askpass"))
@@ -1536,7 +1538,7 @@ int git_config_set_multivar_in_file(const char *config_filename,
 	 * The lock serves a purpose in addition to locking: the new
 	 * contents of .git/config will be written into it.
 	 */
-	lock = xcalloc(1, sizeof(struct lock_file));
+	lock = xcalloc(sizeof(struct lock_file), 1);
 	fd = hold_lock_file_for_update(lock, config_filename, 0);
 	if (fd < 0) {
 		error("could not lock config file %s: %s", config_filename, strerror(errno));
@@ -1633,13 +1635,6 @@ int git_config_set_multivar_in_file(const char *config_filename,
 		contents = xmmap(NULL, contents_sz, PROT_READ,
 			MAP_PRIVATE, in_fd, 0);
 		close(in_fd);
-
-		if (chmod(lock->filename, st.st_mode & 07777) < 0) {
-			error("chmod on %s failed: %s",
-				lock->filename, strerror(errno));
-			ret = CONFIG_NO_WRITE;
-			goto out_free;
-		}
 
 		if (store.seen == 0)
 			store.seen = 1;
@@ -1789,7 +1784,6 @@ int git_config_rename_section_in_file(const char *config_filename,
 	int out_fd;
 	char buf[1024];
 	FILE *config_file;
-	struct stat st;
 
 	if (new_name && !section_name_is_ok(new_name)) {
 		ret = error("invalid section name: %s", new_name);
@@ -1799,7 +1793,7 @@ int git_config_rename_section_in_file(const char *config_filename,
 	if (!config_filename)
 		config_filename = filename_buf = git_pathdup("config");
 
-	lock = xcalloc(1, sizeof(struct lock_file));
+	lock = xcalloc(sizeof(struct lock_file), 1);
 	out_fd = hold_lock_file_for_update(lock, config_filename, 0);
 	if (out_fd < 0) {
 		ret = error("could not lock config file %s", config_filename);
@@ -1809,14 +1803,6 @@ int git_config_rename_section_in_file(const char *config_filename,
 	if (!(config_file = fopen(config_filename, "rb"))) {
 		/* no config file means nothing to rename, no error */
 		goto unlock_and_out;
-	}
-
-	fstat(fileno(config_file), &st);
-
-	if (chmod(lock->filename, st.st_mode & 07777) < 0) {
-		ret = error("chmod on %s failed: %s",
-				lock->filename, strerror(errno));
-		goto out;
 	}
 
 	while (fgets(buf, sizeof(buf), config_file)) {

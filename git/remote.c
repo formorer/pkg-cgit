@@ -170,6 +170,7 @@ static struct branch *make_branch(const char *name, int len)
 {
 	struct branch *ret;
 	int i;
+	char *refname;
 
 	for (i = 0; i < branches_nr; i++) {
 		if (len ? (!strncmp(name, branches[i]->name, len) &&
@@ -185,7 +186,10 @@ static struct branch *make_branch(const char *name, int len)
 		ret->name = xstrndup(name, len);
 	else
 		ret->name = xstrdup(name);
-	ret->refname = xstrfmt("refs/heads/%s", ret->name);
+	refname = xmalloc(strlen(name) + strlen("refs/heads/") + 1);
+	strcpy(refname, "refs/heads/");
+	strcpy(refname + strlen("refs/heads/"), ret->name);
+	ret->refname = refname;
 
 	return ret;
 }
@@ -484,8 +488,9 @@ static void read_config(void)
 	current_branch = NULL;
 	head_ref = resolve_ref_unsafe("HEAD", sha1, 0, &flag);
 	if (head_ref && (flag & REF_ISSYMREF) &&
-	    skip_prefix(head_ref, "refs/heads/", &head_ref)) {
-		current_branch = make_branch(head_ref, 0);
+	    starts_with(head_ref, "refs/heads/")) {
+		current_branch =
+			make_branch(head_ref + strlen("refs/heads/"), 0);
 	}
 	git_config(handle_config, NULL);
 	if (branch_pushremote_name) {
@@ -518,7 +523,7 @@ static void free_refspecs(struct refspec *refspec, int nr_refspec)
 static struct refspec *parse_refspec_internal(int nr_refspec, const char **refspec, int fetch, int verify)
 {
 	int i;
-	struct refspec *rs = xcalloc(nr_refspec, sizeof(*rs));
+	struct refspec *rs = xcalloc(sizeof(*rs), nr_refspec);
 
 	for (i = 0; i < nr_refspec; i++) {
 		size_t llen;
@@ -1189,7 +1194,7 @@ static int match_explicit(struct ref *src, struct ref *dst,
 	case 1:
 		break;
 	case 0:
-		if (starts_with(dst_value, "refs/"))
+		if (!memcmp(dst_value, "refs/", 5))
 			matched_dst = make_linked_ref(dst_value, dst_tail);
 		else if (is_null_sha1(matched_src->new_sha1))
 			error("unable to delete '%s': remote ref does not exist",

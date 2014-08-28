@@ -403,8 +403,7 @@ test_expect_success 'submit --prepare-p4-only' '
 		git commit -m "prep only add" &&
 		git p4 submit --prepare-p4-only >out &&
 		test_i18ngrep "prepared for submission" out &&
-		test_i18ngrep "must be deleted" out &&
-		test_i18ngrep ! "everything below this line is just the diff" out
+		test_i18ngrep "must be deleted" out
 	) &&
 	(
 		cd "$cli" &&
