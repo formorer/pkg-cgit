@@ -27,7 +27,7 @@ b := $(shell pwd)/debian/cgit/
 
 # main packaging script based on dh7 syntax
 %:
-	dh $@ 
+	dh $@ --with apache2 
 
 override_dh_auto_clean:
 	dh_auto_clean
