@@ -116,23 +116,39 @@ static const char *action_name(const struct replay_opts *opts)
 	return opts->action == REPLAY_REVERT ? "revert" : "cherry-pick";
 }
 
+static char *get_encoding(const char *message);
+
 struct commit_message {
 	char *parent_label;
 	const char *label;
 	const char *subject;
+	char *reencoded_message;
 	const char *message;
 };
 
 static int get_message(struct commit *commit, struct commit_message *out)
 {
+	const char *encoding;
 	const char *abbrev, *subject;
 	int abbrev_len, subject_len;
 	char *q;
 
+	if (!commit->buffer)
+		return -1;
+	encoding = get_encoding(commit->buffer);
+	if (!encoding)
+		encoding = "UTF-8";
 	if (!git_commit_encoding)
 		git_commit_encoding = "UTF-8";
 
-	out->message = logmsg_reencode(commit, NULL, git_commit_encoding);
+	out->reencoded_message = NULL;
+	out->message = commit->buffer;
+	if (same_encoding(encoding, git_commit_encoding))
+		out->reencoded_message = reencode_string(commit->buffer,
+					git_commit_encoding, encoding);
+	if (out->reencoded_message)
+		out->message = out->reencoded_message;
+
 	abbrev = find_unique_abbrev(commit->object.sha1, DEFAULT_ABBREV);
 	abbrev_len = strlen(abbrev);
 
@@ -151,10 +167,29 @@ static int get_message(struct commit *commit, struct commit_message *out)
 	return 0;
 }
 
-static void free_message(struct commit *commit, struct commit_message *msg)
+static void free_message(struct commit_message *msg)
 {
 	free(msg->parent_label);
-	unuse_commit_buffer(commit, msg->message);
+	free(msg->reencoded_message);
+}
+
+static char *get_encoding(const char *message)
+{
+	const char *p = message, *eol;
+
+	while (*p && *p != '\n') {
+		for (eol = p + 1; *eol && *eol != '\n'; eol++)
+			; /* do nothing */
+		if (starts_with(p, "encoding ")) {
+			char *result = xmalloc(eol - 8 - p);
+			strlcpy(result, p + 9, eol - 8 - p);
+			return result;
+		}
+		p = eol;
+		if (*p == '\n')
+			p++;
+	}
+	return NULL;
 }
 
 static void write_cherry_pick_head(struct commit *commit, const char *pseudoref)
@@ -243,15 +278,11 @@ static int fast_forward_to(const unsigned char *to, const unsigned char *from,
 
 	read_cache();
 	if (checkout_fast_forward(from, to, 1))
-		exit(128); /* the callee should have complained already */
+		exit(1); /* the callee should have complained already */
 	ref_lock = lock_any_ref_for_update("HEAD", unborn ? null_sha1 : from,
 					   0, NULL);
-	if (!ref_lock)
-		return error(_("Failed to lock HEAD during fast_forward_to"));
-
 	strbuf_addf(&sb, "%s: fast-forward", action_name(opts));
 	ret = write_ref_sha1(ref_lock, to, sb.buf);
-
 	strbuf_release(&sb);
 	return ret;
 }
@@ -263,11 +294,11 @@ static int do_recursive_merge(struct commit *base, struct commit *next,
 {
 	struct merge_options o;
 	struct tree *result, *next_tree, *base_tree, *head_tree;
-	int clean;
+	int clean, index_fd;
 	const char **xopt;
 	static struct lock_file index_lock;
 
-	hold_locked_index(&index_lock, 1);
+	index_fd = hold_locked_index(&index_lock, 1);
 
 	read_cache();
 
@@ -288,7 +319,8 @@ static int do_recursive_merge(struct commit *base, struct commit *next,
 			    next_tree, base_tree, &result);
 
 	if (active_cache_changed &&
-	    write_locked_index(&the_index, &index_lock, COMMIT_LOCK))
+	    (write_cache(index_fd, active_cache, active_nr) ||
+	     commit_locked_index(&index_lock)))
 		/* TRANSLATORS: %s will be "revert" or "cherry-pick" */
 		die(_("%s: Unable to write new index file"), action_name(opts));
 	rollback_lock_file(&index_lock);
@@ -340,7 +372,9 @@ static int is_index_unchanged(void)
 		active_cache_tree = cache_tree();
 
 	if (!cache_tree_fully_valid(active_cache_tree))
-		if (cache_tree_update(&the_index, 0))
+		if (cache_tree_update(active_cache_tree,
+				      (const struct cache_entry * const *)active_cache,
+				      active_nr, 0))
 			return error(_("Unable to update cache tree\n"));
 
 	return !hashcmp(active_cache_tree->sha1, head_commit->tree->object.sha1);
@@ -358,13 +392,18 @@ static int run_git_commit(const char *defmsg, struct replay_opts *opts,
 {
 	struct argv_array array;
 	int rc;
+	char *gpg_sign;
 
 	argv_array_init(&array);
 	argv_array_push(&array, "commit");
 	argv_array_push(&array, "-n");
 
-	if (opts->gpg_sign)
-		argv_array_pushf(&array, "-S%s", opts->gpg_sign);
+	if (opts->gpg_sign) {
+		gpg_sign = xmalloc(3 + strlen(opts->gpg_sign));
+		sprintf(gpg_sign, "-S%s", opts->gpg_sign);
+		argv_array_push(&array, gpg_sign);
+		free(gpg_sign);
+	}
 	if (opts->signoff)
 		argv_array_push(&array, "-s");
 	if (!opts->edit) {
@@ -446,7 +485,7 @@ static int do_pick_commit(struct commit *commit, struct replay_opts *opts)
 	unsigned char head[20];
 	struct commit *base, *next, *parent;
 	const char *base_label, *next_label;
-	struct commit_message msg = { NULL, NULL, NULL, NULL };
+	struct commit_message msg = { NULL, NULL, NULL, NULL, NULL };
 	char *defmsg = NULL;
 	struct strbuf msgbuf = STRBUF_INIT;
 	int res, unborn = 0, allow;
@@ -611,7 +650,7 @@ static int do_pick_commit(struct commit *commit, struct replay_opts *opts)
 		res = run_git_commit(defmsg, opts, allow);
 
 leave:
-	free_message(commit, &msg);
+	free_message(&msg);
 	free(defmsg);
 
 	return res;
@@ -640,8 +679,9 @@ static void read_and_refresh_cache(struct replay_opts *opts)
 	if (read_index_preload(&the_index, NULL) < 0)
 		die(_("git %s: failed to read the index"), action_name(opts));
 	refresh_index(&the_index, REFRESH_QUIET|REFRESH_UNMERGED, NULL, NULL, NULL);
-	if (the_index.cache_changed && index_fd >= 0) {
-		if (write_locked_index(&the_index, &index_lock, COMMIT_LOCK))
+	if (the_index.cache_changed) {
+		if (write_index(&the_index, index_fd) ||
+		    commit_locked_index(&index_lock))
 			die(_("git %s: failed to refresh the index"), action_name(opts));
 	}
 	rollback_lock_file(&index_lock);
@@ -657,12 +697,10 @@ static int format_todo(struct strbuf *buf, struct commit_list *todo_list,
 	int subject_len;
 
 	for (cur = todo_list; cur; cur = cur->next) {
-		const char *commit_buffer = get_commit_buffer(cur->item, NULL);
 		sha1_abbrev = find_unique_abbrev(cur->item->object.sha1, DEFAULT_ABBREV);
-		subject_len = find_commit_subject(commit_buffer, &subject);
+		subject_len = find_commit_subject(cur->item->buffer, &subject);
 		strbuf_addf(buf, "%s %s %.*s\n", action_str, sha1_abbrev,
 			subject_len, subject);
-		unuse_commit_buffer(cur->item, commit_buffer);
 	}
 	return 0;
 }

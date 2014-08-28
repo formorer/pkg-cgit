@@ -8,7 +8,10 @@
 
 static unsigned int hash_obj(const struct object *obj, unsigned int n)
 {
-	return sha1hash(obj->sha1) % n;
+	unsigned int hash;
+
+	memcpy(&hash, obj->sha1, sizeof(unsigned int));
+	return hash % n;
 }
 
 static void *insert_decoration(struct decoration *n, const struct object *base, void *decoration)

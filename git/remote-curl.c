@@ -194,19 +194,19 @@ static void free_discovery(struct discovery *d)
 	}
 }
 
-static int show_http_message(struct strbuf *type, struct strbuf *charset,
-			     struct strbuf *msg)
+static int show_http_message(struct strbuf *type, struct strbuf *msg)
 {
 	const char *p, *eol;
 
 	/*
 	 * We only show text/plain parts, as other types are likely
 	 * to be ugly to look at on the user's terminal.
+	 *
+	 * TODO should handle "; charset=XXX", and re-encode into
+	 * logoutputencoding
 	 */
-	if (strcmp(type->buf, "text/plain"))
+	if (strcasecmp(type->buf, "text/plain"))
 		return -1;
-	if (charset->len)
-		strbuf_reencode(msg, charset->buf, get_log_output_encoding());
 
 	strbuf_trim(msg);
 	if (!msg->len)
@@ -225,7 +225,6 @@ static struct discovery* discover_refs(const char *service, int for_push)
 {
 	struct strbuf exp = STRBUF_INIT;
 	struct strbuf type = STRBUF_INIT;
-	struct strbuf charset = STRBUF_INIT;
 	struct strbuf buffer = STRBUF_INIT;
 	struct strbuf refs_url = STRBUF_INIT;
 	struct strbuf effective_url = STRBUF_INIT;
@@ -250,7 +249,6 @@ static struct discovery* discover_refs(const char *service, int for_push)
 
 	memset(&options, 0, sizeof(options));
 	options.content_type = &type;
-	options.charset = &charset;
 	options.effective_url = &effective_url;
 	options.base_url = &url;
 	options.no_cache = 1;
@@ -261,13 +259,13 @@ static struct discovery* discover_refs(const char *service, int for_push)
 	case HTTP_OK:
 		break;
 	case HTTP_MISSING_TARGET:
-		show_http_message(&type, &charset, &buffer);
+		show_http_message(&type, &buffer);
 		die("repository '%s' not found", url.buf);
 	case HTTP_NOAUTH:
-		show_http_message(&type, &charset, &buffer);
+		show_http_message(&type, &buffer);
 		die("Authentication failed for '%s'", url.buf);
 	default:
-		show_http_message(&type, &charset, &buffer);
+		show_http_message(&type, &buffer);
 		die("unable to access '%s': %s", url.buf, curl_errorstr);
 	}
 
@@ -312,7 +310,6 @@ static struct discovery* discover_refs(const char *service, int for_push)
 	strbuf_release(&refs_url);
 	strbuf_release(&exp);
 	strbuf_release(&type);
-	strbuf_release(&charset);
 	strbuf_release(&effective_url);
 	strbuf_release(&buffer);
 	last_discovery = last;
@@ -399,7 +396,7 @@ static curlioerr rpc_ioctl(CURL *handle, int cmd, void *clientp)
 			rpc->pos = 0;
 			return CURLIOE_OK;
 		}
-		error("unable to rewind rpc post data - try increasing http.postBuffer");
+		fprintf(stderr, "Unable to rewind rpc post data - try increasing http.postBuffer\n");
 		return CURLIOE_FAILRESTART;
 
 	default:
@@ -709,7 +706,7 @@ static int fetch_dumb(int nr_heads, struct ref **to_fetch)
 		free(targets[i]);
 	free(targets);
 
-	return ret ? error("fetch failed.") : 0;
+	return ret ? error("Fetch failed.") : 0;
 }
 
 static int fetch_git(struct discovery *heads,
@@ -791,9 +788,9 @@ static void parse_fetch(struct strbuf *buf)
 	int alloc_heads = 0, nr_heads = 0;
 
 	do {
-		const char *p;
-		if (skip_prefix(buf->buf, "fetch ", &p)) {
-			const char *name;
+		if (starts_with(buf->buf, "fetch ")) {
+			char *p = buf->buf + strlen("fetch ");
+			char *name;
 			struct ref *ref;
 			unsigned char old_sha1[20];
 
@@ -949,7 +946,7 @@ int main(int argc, const char **argv)
 	git_extract_argv0_path(argv[0]);
 	setup_git_directory_gently(&nongit);
 	if (argc < 2) {
-		error("remote-curl: usage: git remote-curl <remote> [<url>]");
+		fprintf(stderr, "Remote needed\n");
 		return 1;
 	}
 
@@ -968,18 +965,18 @@ int main(int argc, const char **argv)
 	http_init(remote, url.buf, 0);
 
 	do {
-		const char *arg;
-
 		if (strbuf_getline(&buf, stdin, '\n') == EOF) {
 			if (ferror(stdin))
-				error("remote-curl: error reading command stream from git");
+				fprintf(stderr, "Error reading command stream\n");
+			else
+				fprintf(stderr, "Unexpected end of command stream\n");
 			return 1;
 		}
 		if (buf.len == 0)
 			break;
 		if (starts_with(buf.buf, "fetch ")) {
 			if (nongit)
-				die("remote-curl: fetch attempted without a local repo");
+				die("Fetch attempted without a local repo");
 			parse_fetch(&buf);
 
 		} else if (!strcmp(buf.buf, "list") || starts_with(buf.buf, "list ")) {
@@ -989,8 +986,9 @@ int main(int argc, const char **argv)
 		} else if (starts_with(buf.buf, "push ")) {
 			parse_push(&buf);
 
-		} else if (skip_prefix(buf.buf, "option ", &arg)) {
-			char *value = strchr(arg, ' ');
+		} else if (starts_with(buf.buf, "option ")) {
+			char *name = buf.buf + strlen("option ");
+			char *value = strchr(name, ' ');
 			int result;
 
 			if (value)
@@ -998,7 +996,7 @@ int main(int argc, const char **argv)
 			else
 				value = "true";
 
-			result = set_option(arg, value);
+			result = set_option(name, value);
 			if (!result)
 				printf("ok\n");
 			else if (result < 0)
@@ -1015,7 +1013,7 @@ int main(int argc, const char **argv)
 			printf("\n");
 			fflush(stdout);
 		} else {
-			error("remote-curl: unknown command '%s' from git", buf.buf);
+			fprintf(stderr, "Unknown command '%s'\n", buf.buf);
 			return 1;
 		}
 		strbuf_reset(&buf);

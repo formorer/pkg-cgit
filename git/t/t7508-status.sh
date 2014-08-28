@@ -1350,7 +1350,8 @@ test_expect_success "status (core.commentchar with submodule summary)" '
 
 test_expect_success "status (core.commentchar with two chars with submodule summary)" '
 	test_config core.commentchar ";;" &&
-	test_must_fail git -c status.displayCommentPrefix=true status
+	git -c status.displayCommentPrefix=true status >output &&
+	test_i18ncmp expect output
 '
 
 test_expect_success "--ignore-submodules=all suppresses submodule summary" '

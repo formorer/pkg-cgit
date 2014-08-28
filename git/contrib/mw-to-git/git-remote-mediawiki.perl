@@ -461,12 +461,7 @@ sub download_mw_mediafile {
 
 	my $response = $mediawiki->{ua}->get($download_url);
 	if ($response->code == HTTP_CODE_OK) {
-		# It is tempting to return
-		# $response->decoded_content({charset => "none"}), but
-		# when doing so, utf8::downgrade($content) fails with
-		# "Wide character in subroutine entry".
-		$response->decode();
-		return $response->content();
+		return $response->decoded_content;
 	} else {
 		print {*STDERR} "Error downloading mediafile from :\n";
 		print {*STDERR} "URL: ${download_url}\n";

@@ -37,11 +37,6 @@ then
 	test_done
 fi
 
-if ! test_have_prereq SANITY; then
-	test_skip_or_die $GIT_TEST_HTTPD \
-		"Cannot run httpd tests as root"
-fi
-
 HTTPD_PARA=""
 
 for DEFAULT_HTTPD_PATH in '/usr/sbin/httpd' '/usr/sbin/apache2'
@@ -110,15 +105,10 @@ else
 		"Could not identify web server at '$LIB_HTTPD_PATH'"
 fi
 
-install_script () {
-	write_script "$HTTPD_ROOT_PATH/$1" <"$TEST_PATH/$1"
-}
-
 prepare_httpd() {
 	mkdir -p "$HTTPD_DOCUMENT_ROOT_PATH"
 	cp "$TEST_PATH"/passwd "$HTTPD_ROOT_PATH"
-	install_script broken-smart-http.sh
-	install_script error.sh
+	cp "$TEST_PATH"/broken-smart-http.sh "$HTTPD_ROOT_PATH"
 
 	ln -s "$LIB_HTTPD_MODULE_PATH" "$HTTPD_ROOT_PATH/modules"
 
@@ -142,7 +132,7 @@ prepare_httpd() {
 	HTTPD_URL_USER=$HTTPD_PROTO://user%40host@$HTTPD_DEST
 	HTTPD_URL_USER_PASS=$HTTPD_PROTO://user%40host:pass%40host@$HTTPD_DEST
 
-	if test -n "$LIB_HTTPD_DAV" || test -n "$LIB_HTTPD_SVN"
+	if test -n "$LIB_HTTPD_DAV" -o -n "$LIB_HTTPD_SVN"
 	then
 		HTTPD_PARA="$HTTPD_PARA -DDAV"
 

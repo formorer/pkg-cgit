@@ -14,11 +14,7 @@ test_description='merge-recursive options
 . ./test-lib.sh
 
 test_have_prereq SED_STRIPS_CR && SED_OPTIONS=-b
-if test_have_prereq GREP_STRIPS_CR
-then
-	GREP_OPTIONS=-U
-	export GREP_OPTIONS
-fi
+test_have_prereq GREP_STRIPS_CR && export GREP_OPTIONS=-U
 
 test_expect_success 'setup' '
 	conflict_hunks () {

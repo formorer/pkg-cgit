@@ -13,8 +13,7 @@ refspec="${GIT_REMOTE_TESTGIT_REFSPEC-$default_refspec}"
 
 test -z "$refspec" && prefix="refs"
 
-GIT_DIR="$url/.git"
-export GIT_DIR
+export GIT_DIR="$url/.git"
 
 force=
 

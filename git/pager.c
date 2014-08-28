@@ -85,7 +85,7 @@ void setup_pager(void)
 		int i = 0;
 
 		if (!getenv("LESS"))
-			env[i++] = "LESS=FRX";
+			env[i++] = "LESS=FRSX";
 		if (!getenv("LV"))
 			env[i++] = "LV=-c";
 		env[i] = NULL;

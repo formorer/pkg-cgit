@@ -1,3 +1,4 @@
+#!/bin/sh
 printf "Content-Type: text/%s\n" "html"
 echo
 printf "%s\n" "001e# service=git-upload-pack"

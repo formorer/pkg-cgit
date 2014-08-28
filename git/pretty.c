@@ -40,9 +40,10 @@ static int git_pretty_formats_config(const char *var, const char *value, void *c
 	const char *fmt;
 	int i;
 
-	if (!skip_prefix(var, "pretty.", &name))
+	if (!starts_with(var, "pretty."))
 		return 0;
 
+	name = var + strlen("pretty.");
 	for (i = 0; i < builtin_formats_len; i++) {
 		if (!strcmp(commit_formats[i].name, name))
 			return 0;
@@ -273,7 +274,7 @@ static void add_rfc822_quoted(struct strbuf *out, const char *s, int len)
 
 enum rfc2047_type {
 	RFC2047_SUBJECT,
-	RFC2047_ADDRESS
+	RFC2047_ADDRESS,
 };
 
 static int is_rfc2047_special(char ch, enum rfc2047_type type)
@@ -392,8 +393,8 @@ static void add_rfc2047(struct strbuf *sb, const char *line, size_t len,
 	strbuf_addstr(sb, "?=");
 }
 
-const char *show_ident_date(const struct ident_split *ident,
-			    enum date_mode mode)
+static const char *show_ident_date(const struct ident_split *ident,
+				   enum date_mode mode)
 {
 	unsigned long date = 0;
 	long tz = 0;
@@ -605,15 +606,28 @@ static char *replace_encoding_header(char *buf, const char *encoding)
 	return strbuf_detach(&tmp, NULL);
 }
 
-const char *logmsg_reencode(const struct commit *commit,
-			    char **commit_encoding,
-			    const char *output_encoding)
+char *logmsg_reencode(const struct commit *commit,
+		      char **commit_encoding,
+		      const char *output_encoding)
 {
 	static const char *utf8 = "UTF-8";
 	const char *use_encoding;
 	char *encoding;
-	const char *msg = get_commit_buffer(commit, NULL);
+	char *msg = commit->buffer;
 	char *out;
+
+	if (!msg) {
+		enum object_type type;
+		unsigned long size;
+
+		msg = read_sha1_file(commit->object.sha1, &type, &size);
+		if (!msg)
+			die("Cannot read commit object %s",
+			    sha1_to_hex(commit->object.sha1));
+		if (type != OBJ_COMMIT)
+			die("Expected commit for '%s', got %s",
+			    sha1_to_hex(commit->object.sha1), typename(type));
+	}
 
 	if (!output_encoding || !*output_encoding) {
 		if (commit_encoding)
@@ -638,13 +652,12 @@ const char *logmsg_reencode(const struct commit *commit,
 		 * Otherwise, we still want to munge the encoding header in the
 		 * result, which will be done by modifying the buffer. If we
 		 * are using a fresh copy, we can reuse it. But if we are using
-		 * the cached copy from get_commit_buffer, we need to duplicate it
-		 * to avoid munging the cached copy.
+		 * the cached copy from commit->buffer, we need to duplicate it
+		 * to avoid munging commit->buffer.
 		 */
-		if (msg == get_cached_commit_buffer(commit, NULL))
-			out = xstrdup(msg);
-		else
-			out = (char *)msg;
+		out = msg;
+		if (out == commit->buffer)
+			out = xstrdup(out);
 	}
 	else {
 		/*
@@ -654,8 +667,8 @@ const char *logmsg_reencode(const struct commit *commit,
 		 * copy, we can free it.
 		 */
 		out = reencode_string(msg, output_encoding, use_encoding);
-		if (out)
-			unuse_commit_buffer(commit, msg);
+		if (out && msg != commit->buffer)
+			free(msg);
 	}
 
 	/*
@@ -672,6 +685,12 @@ const char *logmsg_reencode(const struct commit *commit,
 	 * case we just return the commit message verbatim.
 	 */
 	return out ? out : msg;
+}
+
+void logmsg_free(char *msg, const struct commit *commit)
+{
+	if (msg != commit->buffer)
+		free(msg);
 }
 
 static int mailmap_name(const char **email, size_t *email_len,
@@ -777,7 +796,7 @@ struct format_commit_context {
 	struct signature_check signature_check;
 	enum flush_type flush_type;
 	enum trunc_type truncate;
-	const char *message;
+	char *message;
 	char *commit_encoding;
 	size_t width, indent1, indent2;
 	int auto_color;
@@ -1248,8 +1267,6 @@ static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
 			if (c->signature_check.key)
 				strbuf_addstr(sb, c->signature_check.key);
 			break;
-		default:
-			return 0;
 		}
 		return 2;
 	}
@@ -1376,7 +1393,7 @@ static size_t format_and_pad_commit(struct strbuf *sb, /* in UTF-8 */
 		case trunc_none:
 			break;
 		}
-		strbuf_addbuf(sb, &local_sb);
+		strbuf_addstr(sb, local_sb.buf);
 	} else {
 		int sb_len = sb->len, offset = 0;
 		if (c->flush_type == flush_left)
@@ -1519,7 +1536,9 @@ void format_commit_message(const struct commit *commit,
 	}
 
 	free(context.commit_encoding);
-	unuse_commit_buffer(commit, context.message);
+	logmsg_free(context.message, commit);
+	free(context.signature_check.gpg_output);
+	free(context.signature_check.signer);
 }
 
 static void pp_header(struct pretty_print_context *pp,
@@ -1554,7 +1573,12 @@ static void pp_header(struct pretty_print_context *pp,
 		}
 
 		if (!parents_shown) {
-			unsigned num = commit_list_count(commit->parents);
+			struct commit_list *parent;
+			int num;
+			for (parent = commit->parents, num = 0;
+			     parent;
+			     parent = parent->next, num++)
+				;
 			/* with enough slop */
 			strbuf_grow(sb, num * 50 + 20);
 			add_merge_info(pp, sb, commit);
@@ -1681,7 +1705,7 @@ void pretty_print_commit(struct pretty_print_context *pp,
 	unsigned long beginning_of_body;
 	int indent = 4;
 	const char *msg;
-	const char *reencoded;
+	char *reencoded;
 	const char *encoding;
 	int need_8bit_cte = pp->need_8bit_cte;
 
@@ -1748,7 +1772,7 @@ void pretty_print_commit(struct pretty_print_context *pp,
 	if (pp->fmt == CMIT_FMT_EMAIL && sb->len <= beginning_of_body)
 		strbuf_addch(sb, '\n');
 
-	unuse_commit_buffer(commit, reencoded);
+	logmsg_free(reencoded, commit);
 }
 
 void pp_commit_easy(enum cmit_fmt fmt, const struct commit *commit,

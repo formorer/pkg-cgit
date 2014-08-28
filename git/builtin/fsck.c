@@ -310,7 +310,8 @@ static int fsck_obj(struct object *obj)
 	if (obj->type == OBJ_COMMIT) {
 		struct commit *commit = (struct commit *) obj;
 
-		free_commit_buffer(commit);
+		free(commit->buffer);
+		commit->buffer = NULL;
 
 		if (!commit->parents && show_root)
 			printf("root %s\n", sha1_to_hex(commit->object.sha1));
@@ -479,6 +480,11 @@ static int fsck_handle_reflog(const char *logname, const unsigned char *sha1, in
 {
 	for_each_reflog_ent(logname, fsck_handle_reflog_ent, NULL);
 	return 0;
+}
+
+static int is_branch(const char *refname)
+{
+	return !strcmp(refname, "HEAD") || starts_with(refname, "refs/heads/");
 }
 
 static int fsck_handle_ref(const char *refname, const unsigned char *sha1, int flag, void *cb_data)

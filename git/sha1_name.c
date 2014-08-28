@@ -540,10 +540,8 @@ static int get_sha1_basic(const char *str, int len, unsigned char *sha1)
 			char *tmp = xstrndup(str + at + 2, reflog_len);
 			at_time = approxidate_careful(tmp, &errors);
 			free(tmp);
-			if (errors) {
-				free(real_ref);
+			if (errors)
 				return -1;
-			}
 		}
 		if (read_ref_at(real_ref, at_time, nth, sha1, NULL,
 				&co_time, &co_tz, &co_cnt)) {
@@ -864,17 +862,27 @@ static int get_sha1_oneline(const char *prefix, unsigned char *sha1,
 		commit_list_insert(l->item, &backup);
 	}
 	while (list) {
-		const char *p, *buf;
+		char *p, *to_free = NULL;
 		struct commit *commit;
+		enum object_type type;
+		unsigned long size;
 		int matches;
 
 		commit = pop_most_recent_commit(&list, ONELINE_SEEN);
 		if (!parse_object(commit->object.sha1))
 			continue;
-		buf = get_commit_buffer(commit, NULL);
-		p = strstr(buf, "\n\n");
+		if (commit->buffer)
+			p = commit->buffer;
+		else {
+			p = read_sha1_file(commit->object.sha1, &type, &size);
+			if (!p)
+				continue;
+			to_free = p;
+		}
+
+		p = strstr(p, "\n\n");
 		matches = p && !regexec(&regex, p + 2, 0, NULL, 0);
-		unuse_commit_buffer(commit, buf);
+		free(to_free);
 
 		if (matches) {
 			hashcpy(sha1, commit->object.sha1);
@@ -903,8 +911,10 @@ static int grab_nth_branch_switch(unsigned char *osha1, unsigned char *nsha1,
 	const char *match = NULL, *target = NULL;
 	size_t len;
 
-	if (skip_prefix(message, "checkout: moving from ", &match))
+	if (starts_with(message, "checkout: moving from ")) {
+		match = message + strlen("checkout: moving from ");
 		target = strstr(match, " to ");
+	}
 
 	if (!match || !target)
 		return 0;
@@ -948,7 +958,7 @@ static int interpret_nth_prior_checkout(const char *name, int namelen,
 	retval = 0;
 	if (0 < for_each_reflog_ent_reverse("HEAD", grab_nth_branch_switch, &cb)) {
 		strbuf_reset(buf);
-		strbuf_addbuf(buf, &cb.buf);
+		strbuf_add(buf, cb.buf.buf, cb.buf.len);
 		retval = brace - name + 1;
 	}
 
@@ -1242,7 +1252,10 @@ static void diagnose_invalid_sha1_path(const char *prefix,
 		die("Path '%s' exists on disk, but not in '%.*s'.",
 		    filename, object_name_len, object_name);
 	if (errno == ENOENT || errno == ENOTDIR) {
-		char *fullname = xstrfmt("%s%s", prefix, filename);
+		char *fullname = xmalloc(strlen(filename)
+					     + strlen(prefix) + 1);
+		strcpy(fullname, prefix);
+		strcat(fullname, filename);
 
 		if (!get_tree_entry(tree_sha1, fullname,
 				    sha1, &mode)) {

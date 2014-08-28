@@ -221,19 +221,17 @@ static void get_idx_file(char *name)
 
 static int http_config(const char *var, const char *value, void *cb)
 {
-	const char *p;
-
 	if (!strcmp(var, "http.getanyfile")) {
 		getanyfile = git_config_bool(var, value);
 		return 0;
 	}
 
-	if (skip_prefix(var, "http.", &p)) {
+	if (starts_with(var, "http.")) {
 		int i;
 
 		for (i = 0; i < ARRAY_SIZE(rpc_service); i++) {
 			struct rpc_service *svc = &rpc_service[i];
-			if (!strcmp(p, svc->config_name)) {
+			if (!strcmp(var + 5, svc->config_name)) {
 				svc->enabled = git_config_bool(var, value);
 				return 0;
 			}
@@ -246,16 +244,15 @@ static int http_config(const char *var, const char *value, void *cb)
 
 static struct rpc_service *select_service(const char *name)
 {
-	const char *svc_name;
 	struct rpc_service *svc = NULL;
 	int i;
 
-	if (!skip_prefix(name, "git-", &svc_name))
+	if (!starts_with(name, "git-"))
 		forbidden("Unsupported service: '%s'", name);
 
 	for (i = 0; i < ARRAY_SIZE(rpc_service); i++) {
 		struct rpc_service *s = &rpc_service[i];
-		if (!strcmp(s->name, svc_name)) {
+		if (!strcmp(s->name, name + 4)) {
 			svc = s;
 			break;
 		}
@@ -610,7 +607,9 @@ int main(int argc, char **argv)
 
 			cmd = c;
 			n = out[0].rm_eo - out[0].rm_so;
-			cmd_arg = xmemdupz(dir + out[0].rm_so + 1, n - 1);
+			cmd_arg = xmalloc(n);
+			memcpy(cmd_arg, dir + out[0].rm_so + 1, n-1);
+			cmd_arg[n-1] = '\0';
 			dir[out[0].rm_so] = 0;
 			break;
 		}

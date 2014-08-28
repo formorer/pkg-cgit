@@ -3,28 +3,17 @@
 
 prefix ?= /usr/local
 mandir ?= $(prefix)/share/man
-gitexecdir ?= $(prefix)/libexec/git-core
+libexecdir ?= $(prefix)/libexec/git-core
+gitdir ?= $(shell git --exec-path)
 man1dir ?= $(mandir)/man1
 
-../../GIT-VERSION-FILE: FORCE
-	$(MAKE) -C ../../ GIT-VERSION-FILE
-
--include ../../GIT-VERSION-FILE
+gitver ?= $(word 3,$(shell git --version))
 
 # this should be set to a 'standard' bsd-type install program
-INSTALL  ?= install
-RM       ?= rm -f
+INSTALL ?= install
 
-ASCIIDOC = asciidoc
-XMLTO    = xmlto
-
-ifndef SHELL_PATH
-	SHELL_PATH = /bin/sh
-endif
-SHELL_PATH_SQ = $(subst ','\'',$(SHELL_PATH))
-
-ASCIIDOC_CONF = ../../Documentation/asciidoc.conf
-MANPAGE_XSL   = ../../Documentation/manpage-normal.xsl
+ASCIIDOC_CONF      = ../../Documentation/asciidoc.conf
+MANPAGE_NORMAL_XSL =  ../../Documentation/manpage-normal.xsl
 
 GIT_SUBTREE_SH := git-subtree.sh
 GIT_SUBTREE    := git-subtree
@@ -37,14 +26,13 @@ GIT_SUBTREE_HTML := git-subtree.html
 all: $(GIT_SUBTREE)
 
 $(GIT_SUBTREE): $(GIT_SUBTREE_SH)
-	sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' $< >$@
-	chmod +x $@
+	cp $< $@ && chmod +x $@
 
 doc: $(GIT_SUBTREE_DOC) $(GIT_SUBTREE_HTML)
 
 install: $(GIT_SUBTREE)
-	$(INSTALL) -d -m 755 $(DESTDIR)$(gitexecdir)
-	$(INSTALL) -m 755 $(GIT_SUBTREE) $(DESTDIR)$(gitexecdir)
+	$(INSTALL) -d -m 755 $(DESTDIR)$(libexecdir)
+	$(INSTALL) -m 755 $(GIT_SUBTREE) $(DESTDIR)$(libexecdir)
 
 install-doc: install-man
 
@@ -53,21 +41,19 @@ install-man: $(GIT_SUBTREE_DOC)
 	$(INSTALL) -m 644 $^ $(DESTDIR)$(man1dir)
 
 $(GIT_SUBTREE_DOC): $(GIT_SUBTREE_XML)
-	$(XMLTO) -m $(MANPAGE_XSL) man $^
+	xmlto -m $(MANPAGE_NORMAL_XSL)  man $^
 
 $(GIT_SUBTREE_XML): $(GIT_SUBTREE_TXT)
-	$(ASCIIDOC) -b docbook -d manpage -f $(ASCIIDOC_CONF) \
-		-agit_version=$(GIT_VERSION) $^
+	asciidoc -b docbook -d manpage -f $(ASCIIDOC_CONF) \
+		-agit_version=$(gitver) $^
 
 $(GIT_SUBTREE_HTML): $(GIT_SUBTREE_TXT)
-	$(ASCIIDOC) -b xhtml11 -d manpage -f $(ASCIIDOC_CONF) \
-		-agit_version=$(GIT_VERSION) $^
+	asciidoc -b xhtml11 -d manpage -f $(ASCIIDOC_CONF) \
+		-agit_version=$(gitver) $^
 
 test:
 	$(MAKE) -C t/ test
 
 clean:
-	$(RM) $(GIT_SUBTREE)
-	$(RM) *.xml *.html *.1
-
-.PHONY: FORCE
+	rm -f *~ *.xml *.html *.1
+	rm -rf subproj mainline

@@ -345,17 +345,7 @@ PidFile "$fqgitdir/pid"
 Listen $bind$port
 EOF
 
-	for mod in mpm_event mpm_prefork mpm_worker
-	do
-		if test -e $module_path/mod_${mod}.so
-		then
-			echo "LoadModule ${mod}_module " \
-			     "$module_path/mod_${mod}.so" >> "$conf"
-			# only one mpm module permitted
-			break
-		fi
-	done
-	for mod in mime dir env log_config authz_core
+	for mod in mime dir env log_config
 	do
 		if test -e $module_path/mod_${mod}.so
 		then
