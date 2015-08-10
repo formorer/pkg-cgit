@@ -122,6 +122,7 @@ extern void warn_dangling_symrefs(FILE *fp, const char *msg_fmt, const struct st
 /*
  * Lock the packed-refs file for writing.  Flags is passed to
  * hold_lock_file_for_update().  Return 0 on success.
+ * Errno is set to something meaningful on error.
  */
 extern int lock_packed_refs(int flags);
 
@@ -137,6 +138,7 @@ extern void add_packed_ref(const char *refname, const unsigned char *sha1);
  * Write the current version of the packed refs cache from memory to
  * disk.  The packed-refs file must already be locked for writing (see
  * lock_packed_refs()).  Return zero on success.
+ * Sets errno to something meaningful on error.
  */
 extern int commit_packed_refs(void);
 
@@ -173,6 +175,8 @@ extern int repack_without_refs(struct string_list *refnames,
 			       struct strbuf *err);
 
 extern int ref_exists(const char *);
+
+extern int is_branch(const char *refname);
 
 /*
  * If refname is a non-symbolic reference that refers to a tag object,
@@ -221,6 +225,12 @@ extern int read_ref_at(const char *refname, unsigned int flags,
 		       unsigned long at_time, int cnt,
 		       unsigned char *sha1, char **msg,
 		       unsigned long *cutoff_time, int *cutoff_tz, int *cutoff_cnt);
+
+/** Check if a particular reflog exists */
+extern int reflog_exists(const char *refname);
+
+/** Delete a reflog */
+extern int delete_reflog(const char *refname);
 
 /* iterate over reflog entries */
 typedef int each_reflog_ent_fn(unsigned char *osha1, unsigned char *nsha1, const char *, unsigned long, int, const char *, void *);
@@ -347,12 +357,6 @@ void ref_transaction_free(struct ref_transaction *transaction);
 int update_ref(const char *action, const char *refname,
 		const unsigned char *sha1, const unsigned char *oldval,
 		int flags, enum action_on_err onerr);
-
-/**
- * Lock all refs and then perform all modifications.
- */
-int update_refs(const char *action, const struct ref_update **updates,
-		int n, enum action_on_err onerr);
 
 extern int parse_hide_refs_config(const char *var, const char *value, const char *);
 extern int ref_is_hidden(const char *);

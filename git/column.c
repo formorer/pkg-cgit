@@ -334,8 +334,9 @@ static int column_config(const char *var, const char *value,
 int git_column_config(const char *var, const char *value,
 		      const char *command, unsigned int *colopts)
 {
-	const char *it = skip_prefix(var, "column.");
-	if (!it)
+	const char *it;
+
+	if (!skip_prefix(var, "column.", &it))
 		return 0;
 
 	if (!strcmp(it, "ui"))
@@ -368,11 +369,7 @@ static struct child_process column_process = CHILD_PROCESS_INIT;
 
 int run_column_filter(int colopts, const struct column_options *opts)
 {
-	const char *av[10];
-	int ret, ac = 0;
-	struct strbuf sb_colopt  = STRBUF_INIT;
-	struct strbuf sb_width   = STRBUF_INIT;
-	struct strbuf sb_padding = STRBUF_INIT;
+	struct argv_array *argv;
 
 	if (fd_out != -1)
 		return -1;
@@ -390,19 +387,11 @@ int run_column_filter(int colopts, const struct column_options *opts)
 		argv_array_pushf(argv, "--padding=%d", opts->padding);
 
 	fflush(stdout);
-	memset(&column_process, 0, sizeof(column_process));
 	column_process.in = -1;
 	column_process.out = dup(1);
 	column_process.git_cmd = 1;
-	column_process.argv = av;
 
-	ret = start_command(&column_process);
-
-	strbuf_release(&sb_colopt);
-	strbuf_release(&sb_width);
-	strbuf_release(&sb_padding);
-
-	if (ret)
+	if (start_command(&column_process))
 		return -2;
 
 	fd_out = dup(1);

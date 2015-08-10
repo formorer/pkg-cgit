@@ -280,7 +280,7 @@ helper_test_timeout() {
 
 write_script askpass <<\EOF
 echo >&2 askpass: $*
-what=`echo $1 | cut -d" " -f1 | tr A-Z a-z | tr -cd a-z`
+what=$(echo $1 | cut -d" " -f1 | tr A-Z a-z | tr -cd a-z)
 echo "askpass-$what"
 EOF
 GIT_ASKPASS="$PWD/askpass"

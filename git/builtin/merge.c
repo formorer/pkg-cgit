@@ -65,7 +65,7 @@ static int verbosity;
 static int allow_rerere_auto;
 static int abort_current_merge;
 static int show_progress = -1;
-static int default_to_upstream;
+static int default_to_upstream = 1;
 static const char *sign_commit;
 
 static struct strategy all_strategy[] = {
@@ -399,7 +399,7 @@ static void finish(struct commit *head_commit,
 			const char *argv_gc_auto[] = { "gc", "--auto", NULL };
 			update_ref(reflog_message.buf, "HEAD",
 				new_head, head, 0,
-				DIE_ON_ERR);
+				UPDATE_REFS_DIE_ON_ERR);
 			/*
 			 * We ignore errors in 'gc --auto', since the
 			 * user should see them.
@@ -839,17 +839,15 @@ static void prepare_to_commit(struct commit_list *remoteheads)
 static int merge_trivial(struct commit *head, struct commit_list *remoteheads)
 {
 	unsigned char result_tree[20], result_commit[20];
-	struct commit_list *parent = xmalloc(sizeof(*parent));
+	struct commit_list *parents, **pptr = &parents;
 
 	write_tree_trivial(result_tree);
 	printf(_("Wonderful.\n"));
-	parent->item = head;
-	parent->next = xmalloc(sizeof(*parent->next));
-	parent->next->item = remoteheads->item;
-	parent->next->next = NULL;
+	pptr = commit_list_append(head, pptr);
+	pptr = commit_list_append(remoteheads->item, pptr);
 	prepare_to_commit(remoteheads);
-	if (commit_tree(&merge_msg, result_tree, parent, result_commit, NULL,
-			sign_commit))
+	if (commit_tree(merge_msg.buf, merge_msg.len, result_tree, parents,
+			result_commit, NULL, sign_commit))
 		die(_("failed to write commit object"));
 	finish(head, remoteheads, result_commit, "In-index merge");
 	drop_save();
@@ -873,8 +871,8 @@ static int finish_automerge(struct commit *head,
 		commit_list_insert(head, &parents);
 	strbuf_addch(&merge_msg, '\n');
 	prepare_to_commit(remoteheads);
-	if (commit_tree(&merge_msg, result_tree, parents, result_commit,
-			NULL, sign_commit))
+	if (commit_tree(merge_msg.buf, merge_msg.len, result_tree, parents,
+			result_commit, NULL, sign_commit))
 		die(_("failed to write commit object"));
 	strbuf_addf(&buf, "Merge made by the '%s' strategy.", wt_strategy);
 	finish(head, remoteheads, result_commit, buf.buf);
@@ -1210,7 +1208,7 @@ int cmd_merge(int argc, const char **argv, const char *prefix)
 			die(_("%s - not something we can merge"), argv[0]);
 		read_empty(remote_head->object.sha1, 0);
 		update_ref("initial pull", "HEAD", remote_head->object.sha1,
-			   NULL, 0, DIE_ON_ERR);
+			   NULL, 0, UPDATE_REFS_DIE_ON_ERR);
 		goto done;
 	} else {
 		struct strbuf merge_names = STRBUF_INIT;
@@ -1270,10 +1268,7 @@ int cmd_merge(int argc, const char **argv, const char *prefix)
 				printf(_("Commit %s has a good GPG signature by %s\n"),
 				       hex, signature_check.signer);
 
-			free(signature_check.gpg_output);
-			free(signature_check.gpg_status);
-			free(signature_check.signer);
-			free(signature_check.key);
+			signature_check_clear(&signature_check);
 		}
 	}
 
@@ -1327,7 +1322,7 @@ int cmd_merge(int argc, const char **argv, const char *prefix)
 	}
 
 	update_ref("updating ORIG_HEAD", "ORIG_HEAD", head_commit->object.sha1,
-		   NULL, 0, DIE_ON_ERR);
+		   NULL, 0, UPDATE_REFS_DIE_ON_ERR);
 
 	if (remoteheads && !common)
 		; /* No common ancestors found. We need a real merge. */

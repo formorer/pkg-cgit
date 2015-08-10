@@ -12,18 +12,22 @@
 #include "builtin.h"
 #include "refs.h"
 #include "parse-options.h"
+#include "run-command.h"
+#include "tag.h"
 
 static const char * const git_replace_usage[] = {
 	N_("git replace [-f] <object> <replacement>"),
+	N_("git replace [-f] --edit <object>"),
+	N_("git replace [-f] --graft <commit> [<parent>...]"),
 	N_("git replace -d <object>..."),
 	N_("git replace [--format=<format>] [-l [<pattern>]]"),
 	NULL
 };
 
 enum replace_format {
-      REPLACE_FORMAT_SHORT,
-      REPLACE_FORMAT_MEDIUM,
-      REPLACE_FORMAT_LONG
+	REPLACE_FORMAT_SHORT,
+	REPLACE_FORMAT_MEDIUM,
+	REPLACE_FORMAT_LONG
 };
 
 struct show_data {
@@ -123,22 +127,15 @@ static int delete_replace_ref(const char *name, const char *ref,
 	return 0;
 }
 
-static int replace_object(const char *object_ref, const char *replace_ref,
-			  int force)
+static void check_ref_valid(unsigned char object[20],
+			    unsigned char prev[20],
+			    char *ref,
+			    int ref_size,
+			    int force)
 {
-	unsigned char object[20], prev[20], repl[20];
-	enum object_type obj_type, repl_type;
-	char ref[PATH_MAX];
-	struct ref_lock *lock;
-
-	if (get_sha1(object_ref, object))
-		die("Failed to resolve '%s' as a valid ref.", object_ref);
-	if (get_sha1(replace_ref, repl))
-		die("Failed to resolve '%s' as a valid ref.", replace_ref);
-
-	if (snprintf(ref, sizeof(ref),
+	if (snprintf(ref, ref_size,
 		     "refs/replace/%s",
-		     sha1_to_hex(object)) > sizeof(ref) - 1)
+		     sha1_to_hex(object)) > ref_size - 1)
 		die("replace ref name too long: %.*s...", 50, ref);
 	if (check_refname_format(ref, 0))
 		die("'%s' is not a valid ref name.", ref);
@@ -170,10 +167,7 @@ static int replace_object_sha1(const char *object_ref,
 		    object_ref, typename(obj_type),
 		    replace_ref, typename(repl_type));
 
-	if (read_ref(ref, prev))
-		hashclr(prev);
-	else if (!force)
-		die("replace ref '%s' already exists", ref);
+	check_ref_valid(object, prev, ref, sizeof(ref), force);
 
 	transaction = ref_transaction_begin(&err);
 	if (!transaction ||
@@ -423,12 +417,24 @@ static int create_graft(int argc, const char **argv, int force)
 
 int cmd_replace(int argc, const char **argv, const char *prefix)
 {
-	int list = 0, delete = 0, force = 0;
+	int force = 0;
+	int raw = 0;
 	const char *format = NULL;
+	enum {
+		MODE_UNSPECIFIED = 0,
+		MODE_LIST,
+		MODE_DELETE,
+		MODE_EDIT,
+		MODE_GRAFT,
+		MODE_REPLACE
+	} cmdmode = MODE_UNSPECIFIED;
 	struct option options[] = {
-		OPT_BOOL('l', "list", &list, N_("list replace refs")),
-		OPT_BOOL('d', "delete", &delete, N_("delete replace refs")),
+		OPT_CMDMODE('l', "list", &cmdmode, N_("list replace refs"), MODE_LIST),
+		OPT_CMDMODE('d', "delete", &cmdmode, N_("delete replace refs"), MODE_DELETE),
+		OPT_CMDMODE('e', "edit", &cmdmode, N_("edit existing object"), MODE_EDIT),
+		OPT_CMDMODE('g', "graft", &cmdmode, N_("change a commit's parents"), MODE_GRAFT),
 		OPT_BOOL('f', "force", &force, N_("replace the ref if it exists")),
+		OPT_BOOL(0, "raw", &raw, N_("do not pretty-print contents for --edit")),
 		OPT_STRING(0, "format", &format, N_("format"), N_("use this format")),
 		OPT_END()
 	};
@@ -437,44 +443,56 @@ int cmd_replace(int argc, const char **argv, const char *prefix)
 
 	argc = parse_options(argc, argv, prefix, options, git_replace_usage, 0);
 
-	if (list && delete)
-		usage_msg_opt("-l and -d cannot be used together",
+	if (!cmdmode)
+		cmdmode = argc ? MODE_REPLACE : MODE_LIST;
+
+	if (format && cmdmode != MODE_LIST)
+		usage_msg_opt("--format cannot be used when not listing",
 			      git_replace_usage, options);
 
-	if (format && delete)
-		usage_msg_opt("--format and -d cannot be used together",
+	if (force &&
+	    cmdmode != MODE_REPLACE &&
+	    cmdmode != MODE_EDIT &&
+	    cmdmode != MODE_GRAFT)
+		usage_msg_opt("-f only makes sense when writing a replacement",
 			      git_replace_usage, options);
 
-	if (force && (list || delete))
-		usage_msg_opt("-f cannot be used with -d or -l",
+	if (raw && cmdmode != MODE_EDIT)
+		usage_msg_opt("--raw only makes sense with --edit",
 			      git_replace_usage, options);
 
-	/* Delete refs */
-	if (delete) {
+	switch (cmdmode) {
+	case MODE_DELETE:
 		if (argc < 1)
 			usage_msg_opt("-d needs at least one argument",
 				      git_replace_usage, options);
 		return for_each_replace_name(argv, delete_replace_ref);
-	}
 
-	/* Replace object */
-	if (!list && argc) {
+	case MODE_REPLACE:
 		if (argc != 2)
 			usage_msg_opt("bad number of arguments",
 				      git_replace_usage, options);
-		if (format)
-			usage_msg_opt("--format cannot be used when not listing",
-				      git_replace_usage, options);
 		return replace_object(argv[0], argv[1], force);
+
+	case MODE_EDIT:
+		if (argc != 1)
+			usage_msg_opt("-e needs exactly one argument",
+				      git_replace_usage, options);
+		return edit_and_replace(argv[0], force, raw);
+
+	case MODE_GRAFT:
+		if (argc < 1)
+			usage_msg_opt("-g needs at least one argument",
+				      git_replace_usage, options);
+		return create_graft(argc, argv, force);
+
+	case MODE_LIST:
+		if (argc > 1)
+			usage_msg_opt("only one pattern can be given with -l",
+				      git_replace_usage, options);
+		return list_replace_refs(argv[0], format);
+
+	default:
+		die("BUG: invalid cmdmode %d", (int)cmdmode);
 	}
-
-	/* List refs, even if "list" is not set */
-	if (argc > 1)
-		usage_msg_opt("only one pattern can be given with -l",
-			      git_replace_usage, options);
-	if (force)
-		usage_msg_opt("-f needs some arguments",
-			      git_replace_usage, options);
-
-	return list_replace_refs(argv[0], format);
 }

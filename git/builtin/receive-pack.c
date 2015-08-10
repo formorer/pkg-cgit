@@ -703,7 +703,7 @@ static int update_shallow_ref(struct command *cmd, struct shallow_info *si)
 	uint32_t mask = 1 << (cmd->index % 32);
 	int i;
 
-	trace_printf_key("GIT_TRACE_SHALLOW",
+	trace_printf_key(&trace_shallow,
 			 "shallow: update_shallow_ref %s\n", cmd->ref_name);
 	for (i = 0; i < si->shallow->nr; i++)
 		if (si->used_shallow[i] &&
@@ -973,12 +973,9 @@ static void run_update_post_hook(struct command *commands)
 	argv[0] = hook;
 
 	for (argc = 1, cmd = commands; cmd; cmd = cmd->next) {
-		char *p;
 		if (cmd->error_string || cmd->did_not_exist)
 			continue;
-		p = xmalloc(strlen(cmd->ref_name) + 1);
-		strcpy(p, cmd->ref_name);
-		argv[argc] = p;
+		argv[argc] = xstrdup(cmd->ref_name);
 		argc++;
 	}
 	argv[argc] = NULL;

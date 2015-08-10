@@ -30,6 +30,8 @@ all::
 # Define LIBPCREDIR=/foo/bar if your libpcre header and library files are in
 # /foo/bar/include and /foo/bar/lib directories.
 #
+# Define HAVE_ALLOCA_H if you have working alloca(3) defined in that header.
+#
 # Define NO_CURL if you do not have libcurl installed.  git-http-fetch and
 # git-http-push are not built, and you cannot use http:// and https://
 # transports (neither smart nor dumb).
@@ -558,6 +560,7 @@ TEST_PROGRAMS_NEED_X += test-config
 TEST_PROGRAMS_NEED_X += test-date
 TEST_PROGRAMS_NEED_X += test-delta
 TEST_PROGRAMS_NEED_X += test-dump-cache-tree
+TEST_PROGRAMS_NEED_X += test-dump-split-index
 TEST_PROGRAMS_NEED_X += test-genrandom
 TEST_PROGRAMS_NEED_X += test-hashmap
 TEST_PROGRAMS_NEED_X += test-index-version
@@ -762,6 +765,7 @@ LIB_OBJS += sha1_name.o
 LIB_OBJS += shallow.o
 LIB_OBJS += sideband.o
 LIB_OBJS += sigchain.o
+LIB_OBJS += split-index.o
 LIB_OBJS += strbuf.o
 LIB_OBJS += streaming.o
 LIB_OBJS += string-list.o
@@ -888,6 +892,7 @@ BUILTIN_OBJS += builtin/update-ref.o
 BUILTIN_OBJS += builtin/update-server-info.o
 BUILTIN_OBJS += builtin/upload-archive.o
 BUILTIN_OBJS += builtin/var.o
+BUILTIN_OBJS += builtin/verify-commit.o
 BUILTIN_OBJS += builtin/verify-pack.o
 BUILTIN_OBJS += builtin/verify-tag.o
 BUILTIN_OBJS += builtin/write-tree.o
@@ -1464,13 +1469,13 @@ endif
 PROFILE_DIR := $(CURDIR)
 
 ifeq ("$(PROFILE)","GEN")
-	CFLAGS += -fprofile-generate=$(PROFILE_DIR) -DNO_NORETURN=1
+	BASIC_CFLAGS += -fprofile-generate=$(PROFILE_DIR) -DNO_NORETURN=1
 	EXTLIBS += -lgcov
 	export CCACHE_DISABLE = t
 	V = 1
 else
 ifneq ("$(PROFILE)","")
-	CFLAGS += -fprofile-use=$(PROFILE_DIR) -fprofile-correction -DNO_NORETURN=1
+	BASIC_CFLAGS += -fprofile-use=$(PROFILE_DIR) -fprofile-correction -DNO_NORETURN=1
 	export CCACHE_DISABLE = t
 	V = 1
 endif
@@ -1555,8 +1560,10 @@ SHELL = $(SHELL_PATH)
 all:: shell_compatibility_test
 
 ifeq "$(PROFILE)" "BUILD"
-ifeq ($(filter all,$(MAKECMDGOALS)),all)
-all:: profile-clean
+all:: profile
+endif
+
+profile:: profile-clean
 	$(MAKE) PROFILE=GEN all
 	$(MAKE) PROFILE=GEN -j1 test
 	@if test -n "$$GIT_PERF_REPO" || test -d .git; then \
@@ -2211,6 +2218,12 @@ endif
 mergetools_instdir_SQ = $(subst ','\'',$(mergetools_instdir))
 
 install_bindir_programs := $(patsubst %,%$X,$(BINDIR_PROGRAMS_NEED_X)) $(BINDIR_PROGRAMS_NO_X)
+
+profile-install: profile
+	$(MAKE) install
+
+profile-fast-install: profile-fast
+	$(MAKE) install
 
 install: all
 	$(INSTALL) -d -m 755 '$(DESTDIR_SQ)$(bindir_SQ)'

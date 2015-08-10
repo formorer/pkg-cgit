@@ -319,7 +319,6 @@ static void refresh_cache_or_die(int refresh_flags)
 static const char *prepare_index(int argc, const char **argv, const char *prefix,
 				 const struct commit *current_head, int is_status)
 {
-	int fd;
 	struct string_list partial;
 	struct pathspec pathspec;
 	int refresh_flags = REFRESH_QUIET;
@@ -335,12 +334,11 @@ static const char *prepare_index(int argc, const char **argv, const char *prefix
 
 	if (interactive) {
 		char *old_index_env = NULL;
-		fd = hold_locked_index(&index_lock, 1);
+		hold_locked_index(&index_lock, 1);
 
 		refresh_cache_or_die(refresh_flags);
 
-		if (write_cache(fd, active_cache, active_nr) ||
-		    close_lock_file(&index_lock))
+		if (write_locked_index(&the_index, &index_lock, CLOSE_LOCK))
 			die(_("unable to create temporary index"));
 
 		old_index_env = getenv(INDEX_ENVIRONMENT);
@@ -381,12 +379,11 @@ static const char *prepare_index(int argc, const char **argv, const char *prefix
 	 * (B) on failure, rollback the real index.
 	 */
 	if (all || (also && pathspec.nr)) {
-		fd = hold_locked_index(&index_lock, 1);
+		hold_locked_index(&index_lock, 1);
 		add_files_to_cache(also ? prefix : NULL, &pathspec, 0);
 		refresh_cache_or_die(refresh_flags);
 		update_main_cache_tree(WRITE_TREE_SILENT);
-		if (write_cache(fd, active_cache, active_nr) ||
-		    close_lock_file(&index_lock))
+		if (write_locked_index(&the_index, &index_lock, CLOSE_LOCK))
 			die(_("unable to write new_index file"));
 		commit_style = COMMIT_NORMAL;
 		return index_lock.filename.buf;
@@ -402,7 +399,7 @@ static const char *prepare_index(int argc, const char **argv, const char *prefix
 	 * We still need to refresh the index here.
 	 */
 	if (!only && !pathspec.nr) {
-		fd = hold_locked_index(&index_lock, 1);
+		hold_locked_index(&index_lock, 1);
 		refresh_cache_or_die(refresh_flags);
 		if (active_cache_changed
 		    || !cache_tree_fully_valid(active_cache_tree)) {
@@ -448,8 +445,7 @@ static const char *prepare_index(int argc, const char **argv, const char *prefix
 			die(_("cannot do a partial commit during a cherry-pick."));
 	}
 
-	memset(&partial, 0, sizeof(partial));
-	partial.strdup_strings = 1;
+	string_list_init(&partial, 1);
 	if (list_paths(&partial, !current_head ? NULL : "HEAD", prefix, &pathspec))
 		exit(1);
 
@@ -457,24 +453,23 @@ static const char *prepare_index(int argc, const char **argv, const char *prefix
 	if (read_cache() < 0)
 		die(_("cannot read the index"));
 
-	fd = hold_locked_index(&index_lock, 1);
+	hold_locked_index(&index_lock, 1);
 	add_remove_files(&partial);
 	refresh_cache(REFRESH_QUIET);
 	update_main_cache_tree(WRITE_TREE_SILENT);
 	if (write_locked_index(&the_index, &index_lock, CLOSE_LOCK))
 		die(_("unable to write new_index file"));
 
-	fd = hold_lock_file_for_update(&false_lock,
-				       git_path("next-index-%"PRIuMAX,
-						(uintmax_t) getpid()),
-				       LOCK_DIE_ON_ERROR);
+	hold_lock_file_for_update(&false_lock,
+				  git_path("next-index-%"PRIuMAX,
+					   (uintmax_t) getpid()),
+				  LOCK_DIE_ON_ERROR);
 
 	create_base_index(current_head);
 	add_remove_files(&partial);
 	refresh_cache(REFRESH_QUIET);
 
-	if (write_cache(fd, active_cache, active_nr) ||
-	    close_lock_file(&false_lock))
+	if (write_locked_index(&the_index, &false_lock, CLOSE_LOCK))
 		die(_("unable to write temporary index file"));
 
 	discard_cache();
@@ -715,7 +710,7 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 		char *buffer;
 		buffer = strstr(use_message_buffer, "\n\n");
 		if (buffer)
-			strbuf_add(&sb, buffer + 2, strlen(buffer + 2));
+			strbuf_addstr(&sb, buffer + 2);
 		hook_arg1 = "commit";
 		hook_arg2 = use_message;
 	} else if (fixup_message) {
@@ -787,6 +782,8 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 	if (fwrite(sb.buf, 1, sb.len, s->fp) < sb.len)
 		die_errno(_("could not write commit template"));
 
+	if (auto_comment_line_char)
+		adjust_comment_line_char(&sb);
 	strbuf_release(&sb);
 
 	/* This checks if committer ident is explicitly given */
@@ -794,7 +791,8 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 	if (use_editor && include_status) {
 		int ident_shown = 0;
 		int saved_color_setting;
-		char *ai_tmp, *ci_tmp;
+		struct ident_split ci, ai;
+
 		if (whence != FROM_COMMIT) {
 			if (cleanup_mode == CLEANUP_SCISSORS)
 				wt_status_add_cut_line(s->fp);
@@ -846,27 +844,33 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
 		if (ident_cmp(&ai, &ci))
 			status_printf_ln(s, GIT_COLOR_NORMAL,
 				_("%s"
-				"Author:    %s"),
+				"Author:    %.*s <%.*s>"),
 				ident_shown++ ? "" : "\n",
-				author_ident->buf);
+				(int)(ai.name_end - ai.name_begin), ai.name_begin,
+				(int)(ai.mail_end - ai.mail_begin), ai.mail_begin);
+
+		if (author_date_is_interesting())
+			status_printf_ln(s, GIT_COLOR_NORMAL,
+				_("%s"
+				"Date:      %s"),
+				ident_shown++ ? "" : "\n",
+				show_ident_date(&ai, DATE_NORMAL));
 
 		if (!committer_ident_sufficiently_given())
 			status_printf_ln(s, GIT_COLOR_NORMAL,
 				_("%s"
-				"Committer: %s"),
+				"Committer: %.*s <%.*s>"),
 				ident_shown++ ? "" : "\n",
-				committer_ident.buf);
+				(int)(ci.name_end - ci.name_begin), ci.name_begin,
+				(int)(ci.mail_end - ci.mail_begin), ci.mail_begin);
 
 		if (ident_shown)
-			status_printf_ln(s, GIT_COLOR_NORMAL, "");
+			status_printf_ln(s, GIT_COLOR_NORMAL, "%s", "");
 
 		saved_color_setting = s->use_color;
 		s->use_color = 0;
 		commitable = run_status(s->fp, index_file, prefix, 1, s);
 		s->use_color = saved_color_setting;
-
-		*ai_tmp = ' ';
-		*ci_tmp = ' ';
 	} else {
 		unsigned char sha1[20];
 		const char *parent = "HEAD";
@@ -1001,7 +1005,7 @@ static int message_is_empty(struct strbuf *sb)
 static int template_untouched(struct strbuf *sb)
 {
 	struct strbuf tmpl = STRBUF_INIT;
-	char *start;
+	const char *start;
 
 	if (cleanup_mode == CLEANUP_NONE && sb->len)
 		return 0;
@@ -1010,8 +1014,7 @@ static int template_untouched(struct strbuf *sb)
 		return 0;
 
 	stripspace(&tmpl, cleanup_mode == CLEANUP_ALL);
-	start = (char *)skip_prefix(sb->buf, tmpl.buf);
-	if (!start)
+	if (!skip_prefix(sb->buf, tmpl.buf, &start))
 		start = sb->buf;
 	strbuf_release(&tmpl);
 	return rest_is_empty(sb, start - sb->buf);
@@ -1435,6 +1438,13 @@ static void print_summary(const char *prefix, const unsigned char *sha1,
 		strbuf_addstr(&format, "\n Author: ");
 		strbuf_addbuf_percentquote(&format, &author_ident);
 	}
+	if (author_date_is_interesting()) {
+		struct strbuf date = STRBUF_INIT;
+		format_commit_message(commit, "%ad", &date, &pctx);
+		strbuf_addstr(&format, "\n Date: ");
+		strbuf_addbuf_percentquote(&format, &date);
+		strbuf_release(&date);
+	}
 	if (!committer_ident_sufficiently_given()) {
 		strbuf_addstr(&format, "\n Committer: ");
 		strbuf_addbuf_percentquote(&format, &committer_ident);
@@ -1736,8 +1746,8 @@ int cmd_commit(int argc, const char **argv, const char *prefix)
 		append_merge_tag_headers(parents, &tail);
 	}
 
-	if (commit_tree_extended(&sb, active_cache_tree->sha1, parents, sha1,
-				 author_ident.buf, sign_commit, extra)) {
+	if (commit_tree_extended(sb.buf, sb.len, active_cache_tree->sha1,
+			 parents, sha1, author_ident.buf, sign_commit, extra)) {
 		rollback_index_files();
 		die(_("failed to write commit object"));
 	}

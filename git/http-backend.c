@@ -239,15 +239,16 @@ static void http_config(void)
 
 static struct rpc_service *select_service(const char *name)
 {
+	const char *svc_name;
 	struct rpc_service *svc = NULL;
 	int i;
 
-	if (!starts_with(name, "git-"))
+	if (!skip_prefix(name, "git-", &svc_name))
 		forbidden("Unsupported service: '%s'", name);
 
 	for (i = 0; i < ARRAY_SIZE(rpc_service); i++) {
 		struct rpc_service *s = &rpc_service[i];
-		if (!strcmp(s->name, name + 4)) {
+		if (!strcmp(s->name, svc_name)) {
 			svc = s;
 			break;
 		}
@@ -600,9 +601,7 @@ int main(int argc, char **argv)
 
 			cmd = c;
 			n = out[0].rm_eo - out[0].rm_so;
-			cmd_arg = xmalloc(n);
-			memcpy(cmd_arg, dir + out[0].rm_so + 1, n-1);
-			cmd_arg[n-1] = '\0';
+			cmd_arg = xmemdupz(dir + out[0].rm_so + 1, n - 1);
 			dir[out[0].rm_so] = 0;
 			break;
 		}

@@ -201,15 +201,14 @@ static int cmd_import(const char *line)
 			die_errno("Couldn't open svn dump file %s.", url);
 	} else {
 		svndump_proc.out = -1;
-		argv_array_push(&svndump_argv, "svnrdump");
-		argv_array_push(&svndump_argv, "dump");
-		argv_array_push(&svndump_argv, url);
-		argv_array_pushf(&svndump_argv, "-r%u:HEAD", startrev);
-		svndump_proc.argv = svndump_argv.argv;
+		argv_array_push(&svndump_proc.args, command);
+		argv_array_push(&svndump_proc.args, "dump");
+		argv_array_push(&svndump_proc.args, url);
+		argv_array_pushf(&svndump_proc.args, "-r%u:HEAD", startrev);
 
 		code = start_command(&svndump_proc);
 		if (code)
-			die("Unable to start %s, code %d", svndump_proc.argv[0], code);
+			die("Unable to start %s, code %d", command, code);
 		dumpin_fd = svndump_proc.out;
 	}
 	/* setup marks file import/export */
@@ -225,8 +224,7 @@ static int cmd_import(const char *line)
 	if (!dump_from_file) {
 		code = finish_command(&svndump_proc);
 		if (code)
-			warning("%s, returned %d", svndump_proc.argv[0], code);
-		argv_array_clear(&svndump_argv);
+			warning("%s, returned %d", command, code);
 	}
 
 	return 0;

@@ -103,7 +103,7 @@ static int index_range_of_same_dir(const char *src, int length,
 
 int cmd_mv(int argc, const char **argv, const char *prefix)
 {
-	int i, newfd, gitmodules_modified = 0;
+	int i, gitmodules_modified = 0;
 	int verbose = 0, show_only = 0, force = 0, ignore_errors = 0;
 	struct option builtin_mv_options[] = {
 		OPT__VERBOSE(&verbose, N_("be verbose")),
@@ -125,7 +125,7 @@ int cmd_mv(int argc, const char **argv, const char *prefix)
 	if (--argc < 1)
 		usage_with_options(builtin_mv_usage, builtin_mv_options);
 
-	newfd = hold_locked_index(&lock_file, 1);
+	hold_locked_index(&lock_file, 1);
 	if (read_cache() < 0)
 		die(_("index file corrupt"));
 

@@ -24,95 +24,144 @@ static const char *msg;
  */
 static const char *parse_arg(const char *next, struct strbuf *arg)
 {
-	struct ref_update *update;
+	if (*next == '"') {
+		const char *orig = next;
 
-	/* Allocate and zero-init a struct ref_update */
-	update = xcalloc(1, sizeof(*update));
-	ALLOC_GROW(updates, updates_count + 1, updates_alloc);
-	updates[updates_count++] = update;
-
-	/* Store and reset accumulated options */
-	update->flags = update_flags;
-	update_flags = 0;
-
-	return update;
-}
-
-static void update_store_ref_name(struct ref_update *update,
-				  const char *ref_name)
-{
-	if (check_refname_format(ref_name, REFNAME_ALLOW_ONELEVEL))
-		die("invalid ref format: %s", ref_name);
-	update->ref_name = xstrdup(ref_name);
-}
-
-static void update_store_new_sha1(struct ref_update *update,
-				  const char *newvalue)
-{
-	if (*newvalue && get_sha1(newvalue, update->new_sha1))
-		die("invalid new value for ref %s: %s",
-		    update->ref_name, newvalue);
-}
-
-static void update_store_old_sha1(struct ref_update *update,
-				  const char *oldvalue)
-{
-	if (*oldvalue && get_sha1(oldvalue, update->old_sha1))
-		die("invalid old value for ref %s: %s",
-		    update->ref_name, oldvalue);
-
-	/* We have an old value if non-empty, or if empty without -z */
-	update->have_old = *oldvalue || line_termination;
-}
-
-static const char *parse_arg(const char *next, struct strbuf *arg)
-{
-	/* Parse SP-terminated, possibly C-quoted argument */
-	if (*next != '"')
+		if (unquote_c_style(arg, next, &next))
+			die("badly quoted argument: %s", orig);
+		if (*next && !isspace(*next))
+			die("unexpected character after quoted argument: %s", orig);
+	} else {
 		while (*next && !isspace(*next))
 			strbuf_addch(arg, *next++);
-	else if (unquote_c_style(arg, next, &next))
-		die("badly quoted argument: %s", next);
+	}
 
-	/* Return position after the argument */
 	return next;
 }
 
-static const char *parse_first_arg(const char *next, struct strbuf *arg)
+/*
+ * Parse the reference name immediately after "command SP".  If not
+ * -z, then handle C-quoting.  Return a pointer to a newly allocated
+ * string containing the name of the reference, or NULL if there was
+ * an error.  Update *next to point at the character that terminates
+ * the argument.  Die if C-quoting is malformed or the reference name
+ * is invalid.
+ */
+static char *parse_refname(struct strbuf *input, const char **next)
 {
-	/* Parse argument immediately after "command SP" */
-	strbuf_reset(arg);
+	struct strbuf ref = STRBUF_INIT;
+
 	if (line_termination) {
 		/* Without -z, use the next argument */
-		next = parse_arg(next, arg);
+		*next = parse_arg(*next, &ref);
 	} else {
-		/* With -z, use rest of first NUL-terminated line */
-		strbuf_addstr(arg, next);
-		next = next + arg->len;
+		/* With -z, use everything up to the next NUL */
+		strbuf_addstr(&ref, *next);
+		*next += ref.len;
 	}
-	return next;
+
+	if (!ref.len) {
+		strbuf_release(&ref);
+		return NULL;
+	}
+
+	if (check_refname_format(ref.buf, REFNAME_ALLOW_ONELEVEL))
+		die("invalid ref format: %s", ref.buf);
+
+	return strbuf_detach(&ref, NULL);
 }
 
-static const char *parse_next_arg(const char *next, struct strbuf *arg)
+/*
+ * The value being parsed is <oldvalue> (as opposed to <newvalue>; the
+ * difference affects which error messages are generated):
+ */
+#define PARSE_SHA1_OLD 0x01
+
+/*
+ * For backwards compatibility, accept an empty string for update's
+ * <newvalue> in binary mode to be equivalent to specifying zeros.
+ */
+#define PARSE_SHA1_ALLOW_EMPTY 0x02
+
+/*
+ * Parse an argument separator followed by the next argument, if any.
+ * If there is an argument, convert it to a SHA-1, write it to sha1,
+ * set *next to point at the character terminating the argument, and
+ * return 0.  If there is no argument at all (not even the empty
+ * string), return 1 and leave *next unchanged.  If the value is
+ * provided but cannot be converted to a SHA-1, die.  flags can
+ * include PARSE_SHA1_OLD and/or PARSE_SHA1_ALLOW_EMPTY.
+ */
+static int parse_next_sha1(struct strbuf *input, const char **next,
+			   unsigned char *sha1,
+			   const char *command, const char *refname,
+			   int flags)
 {
-	/* Parse next SP-terminated or NUL-terminated argument, if any */
-	strbuf_reset(arg);
+	struct strbuf arg = STRBUF_INIT;
+	int ret = 0;
+
+	if (*next == input->buf + input->len)
+		goto eof;
+
 	if (line_termination) {
 		/* Without -z, consume SP and use next argument */
-		if (!*next)
-			return NULL;
-		if (*next != ' ')
-			die("expected SP but got: %s", next);
-		next = parse_arg(next + 1, arg);
+		if (!**next || **next == line_termination)
+			return 1;
+		if (**next != ' ')
+			die("%s %s: expected SP but got: %s",
+			    command, refname, *next);
+		(*next)++;
+		*next = parse_arg(*next, &arg);
+		if (arg.len) {
+			if (get_sha1(arg.buf, sha1))
+				goto invalid;
+		} else {
+			/* Without -z, an empty value means all zeros: */
+			hashclr(sha1);
+		}
 	} else {
 		/* With -z, read the next NUL-terminated line */
-		if (*next)
-			die("expected NUL but got: %s", next);
-		if (strbuf_getline(arg, stdin, '\0') == EOF)
-			return NULL;
-		next = arg->buf + arg->len;
+		if (**next)
+			die("%s %s: expected NUL but got: %s",
+			    command, refname, *next);
+		(*next)++;
+		if (*next == input->buf + input->len)
+			goto eof;
+		strbuf_addstr(&arg, *next);
+		*next += arg.len;
+
+		if (arg.len) {
+			if (get_sha1(arg.buf, sha1))
+				goto invalid;
+		} else if (flags & PARSE_SHA1_ALLOW_EMPTY) {
+			/* With -z, treat an empty value as all zeros: */
+			warning("%s %s: missing <newvalue>, treating as zero",
+				command, refname);
+			hashclr(sha1);
+		} else {
+			/*
+			 * With -z, an empty non-required value means
+			 * unspecified:
+			 */
+			ret = 1;
+		}
 	}
-	return next;
+
+	strbuf_release(&arg);
+
+	return ret;
+
+ invalid:
+	die(flags & PARSE_SHA1_OLD ?
+	    "%s %s: invalid <oldvalue>: %s" :
+	    "%s %s: invalid <newvalue>: %s",
+	    command, refname, arg.buf);
+
+ eof:
+	die(flags & PARSE_SHA1_OLD ?
+	    "%s %s: unexpected end of input when reading <oldvalue>" :
+	    "%s %s: unexpected end of input when reading <newvalue>",
+	    command, refname);
 }
 
 
@@ -143,12 +192,11 @@ static const char *parse_cmd_update(struct ref_transaction *transaction,
 			    PARSE_SHA1_ALLOW_EMPTY))
 		die("update %s: missing <newvalue>", refname);
 
-	update = update_alloc();
+	have_old = !parse_next_sha1(input, &next, old_sha1, "update", refname,
+				    PARSE_SHA1_OLD);
 
-	if ((next = parse_first_arg(next, &ref)) != NULL && ref.buf[0])
-		update_store_ref_name(update, ref.buf);
-	else
-		die("update line missing <ref>");
+	if (*next != line_termination)
+		die("update %s: extra input: %s", refname, next);
 
 	if (ref_transaction_update(transaction, refname, new_sha1, old_sha1,
 				   update_flags, have_old, msg, &err))
@@ -158,8 +206,7 @@ static const char *parse_cmd_update(struct ref_transaction *transaction,
 	free(refname);
 	strbuf_release(&err);
 
-	if (next && *next)
-		die("update %s has extra input: %s", ref.buf, next);
+	return next;
 }
 
 static const char *parse_cmd_create(struct ref_transaction *transaction,
@@ -179,8 +226,8 @@ static const char *parse_cmd_create(struct ref_transaction *transaction,
 	if (is_null_sha1(new_sha1))
 		die("create %s: zero <newvalue>", refname);
 
-	update = update_alloc();
-	update->have_old = 1;
+	if (*next != line_termination)
+		die("create %s: extra input: %s", refname, next);
 
 	if (ref_transaction_create(transaction, refname, new_sha1,
 				   update_flags, msg, &err))
@@ -190,8 +237,7 @@ static const char *parse_cmd_create(struct ref_transaction *transaction,
 	free(refname);
 	strbuf_release(&err);
 
-	if (next && *next)
-		die("create %s has extra input: %s", ref.buf, next);
+	return next;
 }
 
 static const char *parse_cmd_delete(struct ref_transaction *transaction,
@@ -215,7 +261,8 @@ static const char *parse_cmd_delete(struct ref_transaction *transaction,
 		have_old = 1;
 	}
 
-	update = update_alloc();
+	if (*next != line_termination)
+		die("delete %s: extra input: %s", refname, next);
 
 	if (ref_transaction_delete(transaction, refname, old_sha1,
 				   update_flags, have_old, msg, &err))
@@ -225,8 +272,7 @@ static const char *parse_cmd_delete(struct ref_transaction *transaction,
 	free(refname);
 	strbuf_release(&err);
 
-	if (next && *next)
-		die("delete %s has extra input: %s", ref.buf, next);
+	return next;
 }
 
 static const char *parse_cmd_verify(struct ref_transaction *transaction,
@@ -247,7 +293,8 @@ static const char *parse_cmd_verify(struct ref_transaction *transaction,
 
 	hashcpy(new_sha1, old_sha1);
 
-	update = update_alloc();
+	if (*next != line_termination)
+		die("verify %s: extra input: %s", refname, next);
 
 	if (ref_transaction_update(transaction, refname, new_sha1, old_sha1,
 				   update_flags, 1, msg, &err))
@@ -257,25 +304,29 @@ static const char *parse_cmd_verify(struct ref_transaction *transaction,
 	free(refname);
 	strbuf_release(&err);
 
-	if (next && *next)
-		die("verify %s has extra input: %s", ref.buf, next);
+	return next;
 }
 
-static void parse_cmd_option(const char *next)
+static const char *parse_cmd_option(struct strbuf *input, const char *next)
 {
-	if (!strcmp(next, "no-deref"))
+	if (!strncmp(next, "no-deref", 8) && next[8] == line_termination)
 		update_flags |= REF_NODEREF;
 	else
 		die("option unknown: %s", next);
+	return next + 8;
 }
 
 static void update_refs_stdin(struct ref_transaction *transaction)
 {
-	struct strbuf cmd = STRBUF_INIT;
+	struct strbuf input = STRBUF_INIT;
+	const char *next;
 
+	if (strbuf_read(&input, 0, 1000) < 0)
+		die_errno("could not read from stdin");
+	next = input.buf;
 	/* Read each line dispatch its command */
-	while (strbuf_getline(&cmd, stdin, line_termination) != EOF)
-		if (!cmd.buf[0])
+	while (next < input.buf + input.len) {
+		if (*next == line_termination)
 			die("empty command in input");
 		else if (isspace(*next))
 			die("whitespace before command: %s", next);
@@ -290,9 +341,12 @@ static void update_refs_stdin(struct ref_transaction *transaction)
 		else if (starts_with(next, "option "))
 			next = parse_cmd_option(&input, next + 7);
 		else
-			die("unknown command: %s", cmd.buf);
+			die("unknown command: %s", next);
 
-	strbuf_release(&cmd);
+		next++;
+	}
+
+	strbuf_release(&input);
 }
 
 int cmd_update_ref(int argc, const char **argv, const char *prefix)
@@ -364,5 +418,5 @@ int cmd_update_ref(int argc, const char **argv, const char *prefix)
 		return delete_ref(refname, oldval ? oldsha1 : NULL, flags);
 	else
 		return update_ref(msg, refname, sha1, oldval ? oldsha1 : NULL,
-				  flags, DIE_ON_ERR);
+				  flags, UPDATE_REFS_DIE_ON_ERR);
 }

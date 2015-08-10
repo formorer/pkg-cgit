@@ -129,6 +129,9 @@ Git index format
   (Version 4) In version 4, the padding after the pathname does not
   exist.
 
+  Interpretation of index entries in split index mode is completely
+  different. See below for details.
+
 == Extensions
 
 === Cached tree

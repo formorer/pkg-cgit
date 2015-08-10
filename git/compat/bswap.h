@@ -129,13 +129,10 @@ static inline uint64_t git_bswap64(uint64_t x)
 # else
 #  error "Cannot determine endianness"
 # endif
+
 #endif
 
-#if !defined(__BYTE_ORDER)
-# error "Cannot determine endianness"
-#endif
-
-#if __BYTE_ORDER == __BIG_ENDIAN
+#if GIT_BYTE_ORDER == GIT_BIG_ENDIAN
 # define ntohll(n) (n)
 # define htonll(n) (n)
 #else

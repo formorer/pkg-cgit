@@ -283,10 +283,7 @@ static int compute_and_write_prerequisites(int bundle_fd,
 			 "rev-list", "--boundary", "--pretty=oneline",
 			 NULL);
 	for (i = 1; i < argc; i++)
-		argv_array_push(&argv_boundary, argv[i]);
-
-	memset(&rls, 0, sizeof(rls));
-	rls.argv = argv_boundary.argv;
+		argv_array_push(&rls.args, argv[i]);
 	rls.out = -1;
 	rls.git_cmd = 1;
 	if (start_command(&rls))

@@ -13,8 +13,7 @@ count () {
 	done
 }
 
-scramble()
-{
+scramble () {
 	i=0
 	while read x
 	do
@@ -23,12 +22,11 @@ scramble()
 			echo "$x"
 		fi
 		i=$((($i+1) % 10))
-	done < "$1" > "$1.new"
+	done <"$1" >"$1.new"
 	mv -f "$1.new" "$1"
 }
 
-run()
-{
+run () {
 	echo \$ "$@"
 	/usr/bin/time "$@" >/dev/null
 }
@@ -38,10 +36,8 @@ test_expect_success 'setup' '
 	git tag root
 '
 
-do_tests()
-{
-	pr=$1
-	nlines=$2
+do_tests () {
+	nlines=$1 pr=${2-}
 
 	test_expect_success $pr "setup: $nlines lines" "
 		rm -f .gitattributes &&
@@ -98,7 +94,7 @@ do_tests()
 	"
 }
 
-do_tests NOT_EXPENSIVE 500
-do_tests EXPENSIVE 50000
+do_tests 500
+do_tests 50000 EXPENSIVE
 
 test_done
