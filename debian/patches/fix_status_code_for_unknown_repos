@@ -8,9 +8,6 @@ Subject: Return a proper status code when there is no repository found
  2 files changed, 48 insertions(+), 13 deletions(-)
  create mode 100755 tests/t0112-no-repo-found.sh
 
-diff --git a/tests/t0112-no-repo-found.sh b/tests/t0112-no-repo-found.sh
-new file mode 100755
-index 0000000..211aa61
 --- /dev/null
 +++ b/tests/t0112-no-repo-found.sh
 @@ -0,0 +1,12 @@
@@ -26,13 +23,11 @@ index 0000000..211aa61
 +test_expect_success 'verify there is no log link' '! grep /log/ tmp'
 +
 +test_done
-diff --git a/ui-repolist.c b/ui-repolist.c
-index c2bcce1..29b1f3f 100644
 --- a/ui-repolist.c
 +++ b/ui-repolist.c
-@@ -248,17 +248,44 @@ static int sort_repolist(char *field)
+@@ -249,37 +249,59 @@
  
- void cgit_print_repolist()
+ void cgit_print_repolist(void)
  {
 -	int i, columns = 3, hits = 0, header = 0;
 +	int i, columns = 3, hits = 0, header = 0, found_repos = 0, matched_size = 0;
@@ -76,31 +71,34 @@ index c2bcce1..29b1f3f 100644
  	cgit_print_http_headers();
  	cgit_print_docstart();
  	cgit_print_pageheader();
-@@ -266,17 +293,14 @@ void cgit_print_repolist()
+ 
  	if (ctx.cfg.index_header)
  		html_include(ctx.cfg.index_header);
- 
+-
 -	if (ctx.qry.sort)
 -		sorted = sort_repolist(ctx.qry.sort);
 -	else if (ctx.cfg.section_sort)
 -		sort_repolist("section");
-+	if (!found_repos) {
-+		cgit_print_error("No repositories found");
-+		goto docend;
-+	}
++    
++    if (!found_repos) {
++        cgit_print_error("No repositories found");
++        goto docend;
++    }
  
  	html("<table summary='repository list' class='list nowrap'>");
 -	for (i = 0; i < cgit_repolist.count; i++) {
 -		ctx.repo = &cgit_repolist.repos[i];
+-		if (ctx.repo->hide || ctx.repo->ignore)
+-			continue;
 -		if (!(is_match(ctx.repo) && is_in_url(ctx.repo)))
 -			continue;
 -		hits++;
-+	for (hits = 1; hits <= found_repos; hits++) {
-+		ctx.repo = matched_repos[hits-1];
++    for (hits = 1; hits <= found_repos; hits++) {
++        ctx.repo = matched_repos[hits-1];
  		if (hits <= ctx.qry.ofs)
  			continue;
  		if (hits > ctx.qry.ofs + ctx.cfg.max_repo_count)
-@@ -328,11 +352,12 @@ void cgit_print_repolist()
+@@ -337,11 +359,12 @@
  		html("</tr>\n");
  	}
  	html("</table>");
@@ -115,4 +113,4 @@ index c2bcce1..29b1f3f 100644
 +	free(matched_repos);
  }
  
- void cgit_print_site_readme()
+ void cgit_print_site_readme(void)

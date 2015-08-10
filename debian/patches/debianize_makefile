@@ -2,7 +2,7 @@
 +++ b/Makefile
 @@ -2,11 +2,11 @@
  
- CGIT_VERSION = v0.10.2
+ CGIT_VERSION = v0.11.2
  CGIT_SCRIPT_NAME = cgit.cgi
 -CGIT_SCRIPT_PATH = /var/www/htdocs/cgit
 +CGIT_SCRIPT_PATH = /usr/share/cgit
