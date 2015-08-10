@@ -549,7 +549,7 @@ int notes_merge(struct notes_merge_options *o,
 	       o->local_ref, o->remote_ref);
 
 	/* Dereference o->local_ref into local_sha1 */
-	if (read_ref_full(o->local_ref, local_sha1, 0, NULL))
+	if (read_ref_full(o->local_ref, 0, local_sha1, NULL))
 		die("Failed to resolve local notes ref '%s'", o->local_ref);
 	else if (!check_refname_format(o->local_ref, 0) &&
 		is_null_sha1(local_sha1))
@@ -594,7 +594,7 @@ int notes_merge(struct notes_merge_options *o,
 	assert(local && remote);
 
 	/* Find merge bases */
-	bases = get_merge_bases(local, remote, 1);
+	bases = get_merge_bases(local, remote);
 	if (!bases) {
 		base_sha1 = null_sha1;
 		base_tree_sha1 = EMPTY_TREE_SHA1_BIN;

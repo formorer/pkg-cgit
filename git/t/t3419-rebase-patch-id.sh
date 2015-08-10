@@ -4,12 +4,7 @@ test_description='git rebase - test patch id computation'
 
 . ./test-lib.sh
 
-test_set_prereq NOT_EXPENSIVE
-test -n "$GIT_PATCHID_TIMING_TESTS" && test_set_prereq EXPENSIVE
-test -x /usr/bin/time && test_set_prereq USR_BIN_TIME
-
-count()
-{
+count () {
 	i=0
 	while test $i -lt $1
 	do

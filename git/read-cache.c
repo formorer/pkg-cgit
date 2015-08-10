@@ -5,6 +5,7 @@
  */
 #define NO_THE_INDEX_COMPATIBILITY_MACROS
 #include "cache.h"
+#include "lockfile.h"
 #include "cache-tree.h"
 #include "refs.h"
 #include "dir.h"
@@ -14,6 +15,9 @@
 #include "resolve-undo.h"
 #include "strbuf.h"
 #include "varint.h"
+#include "split-index.h"
+#include "sigchain.h"
+#include "utf8.h"
 
 static struct cache_entry *refresh_cache_entry(struct cache_entry *ce,
 					       unsigned int options);
@@ -704,7 +708,7 @@ struct cache_entry *make_cache_entry(unsigned int mode,
 		unsigned int refresh_options)
 {
 	int size, len;
-	struct cache_entry *ce;
+	struct cache_entry *ce, *ret;
 
 	if (!verify_path(path)) {
 		error("Invalid path '%s'", path);
@@ -721,7 +725,13 @@ struct cache_entry *make_cache_entry(unsigned int mode,
 	ce->ce_namelen = len;
 	ce->ce_mode = create_ce_mode(mode);
 
-	return refresh_cache_entry(ce, refresh_options);
+	ret = refresh_cache_entry(ce, refresh_options);
+	if (!ret) {
+		free(ce);
+		return NULL;
+	} else {
+		return ret;
+	}
 }
 
 int ce_same_name(const struct cache_entry *a, const struct cache_entry *b)
@@ -756,9 +766,10 @@ static int verify_dotfile(const char *rest)
 	 * shares the path end test with the ".." case.
 	 */
 	case 'g':
-		if (rest[1] != 'i')
+	case 'G':
+		if (rest[1] != 'i' && rest[1] != 'I')
 			break;
-		if (rest[2] != 't')
+		if (rest[2] != 't' && rest[2] != 'T')
 			break;
 		rest += 2;
 	/* fallthrough */
@@ -782,6 +793,10 @@ int verify_path(const char *path)
 			return 1;
 		if (is_dir_sep(c)) {
 inside:
+			if (protect_hfs && is_hfs_dotgit(path))
+				return 0;
+			if (protect_ntfs && is_ntfs_dotgit(path))
+				return 0;
 			c = *path++;
 			if ((c == '.' && !verify_dotfile(path)) ||
 			    is_dir_sep(c) || c == '\0')
@@ -1044,6 +1059,14 @@ static struct cache_entry *refresh_cache_ent(struct index_state *istate,
 		return ce;
 	}
 
+	if (has_symlink_leading_path(ce->name, ce_namelen(ce))) {
+		if (ignore_missing)
+			return ce;
+		if (err)
+			*err = ENOENT;
+		return NULL;
+	}
+
 	if (lstat(ce->name, &st) < 0) {
 		if (ignore_missing && errno == ENOENT)
 			return ce;
@@ -1216,24 +1239,16 @@ static struct cache_entry *refresh_cache_entry(struct cache_entry *ce,
 
 #define INDEX_FORMAT_DEFAULT 3
 
-static int index_format_config(const char *var, const char *value, void *cb)
-{
-	unsigned int *version = cb;
-	if (!strcmp(var, "index.version")) {
-		*version = git_config_int(var, value);
-		return 0;
-	}
-	return 1;
-}
-
 static unsigned int get_index_format_default(void)
 {
 	char *envversion = getenv("GIT_INDEX_VERSION");
 	char *endp;
+	int value;
 	unsigned int version = INDEX_FORMAT_DEFAULT;
 
 	if (!envversion) {
-		git_config(index_format_config, &version);
+		if (!git_config_get_int("index.version", &value))
+			version = value;
 		if (version < INDEX_FORMAT_LB || INDEX_FORMAT_UB < version) {
 			warning(_("index.version set, but the value is invalid.\n"
 				  "Using version %i"), INDEX_FORMAT_DEFAULT);
@@ -1341,6 +1356,14 @@ static int read_index_extension(struct index_state *istate,
 	return 0;
 }
 
+int hold_locked_index(struct lock_file *lk, int die_on_error)
+{
+	return hold_lock_file_for_update(lk, get_index_file(),
+					 die_on_error
+					 ? LOCK_DIE_ON_ERROR
+					 : 0);
+}
+
 int read_index(struct index_state *istate)
 {
 	return read_index_from(istate, get_index_file());
@@ -1438,6 +1461,21 @@ static struct cache_entry *create_from_disk(struct ondisk_cache_entry *ondisk,
 	return ce;
 }
 
+static void check_ce_order(struct cache_entry *ce, struct cache_entry *next_ce)
+{
+	int name_compare = strcmp(ce->name, next_ce->name);
+	if (0 < name_compare)
+		die("unordered stage entries in index");
+	if (!name_compare) {
+		if (!ce_stage(ce))
+			die("multiple stage entries for merged file '%s'",
+				ce->name);
+		if (ce_stage(ce) > ce_stage(next_ce))
+			die("unordered stage entries for '%s'",
+				ce->name);
+	}
+}
+
 /* remember to discard_cache() before reading a different cache! */
 int read_index_from(struct index_state *istate, const char *path)
 {
@@ -1498,6 +1536,9 @@ int read_index_from(struct index_state *istate, const char *path)
 		disk_ce = (struct ondisk_cache_entry *)((char *)mmap + src_offset);
 		ce = create_from_disk(disk_ce, &consumed, previous_name);
 		set_index_entry(istate, i, ce);
+
+		if (i > 0)
+			check_ce_order(istate->cache[i - 1], ce);
 
 		src_offset += consumed;
 	}
@@ -1922,6 +1963,125 @@ int write_index(struct index_state *istate, int newfd)
 	return 0;
 }
 
+void set_alternate_index_output(const char *name)
+{
+	alternate_index_output = name;
+}
+
+static int commit_locked_index(struct lock_file *lk)
+{
+	if (alternate_index_output)
+		return commit_lock_file_to(lk, alternate_index_output);
+	else
+		return commit_lock_file(lk);
+}
+
+static int do_write_locked_index(struct index_state *istate, struct lock_file *lock,
+				 unsigned flags)
+{
+	int ret = do_write_index(istate, lock->fd, 0);
+	if (ret)
+		return ret;
+	assert((flags & (COMMIT_LOCK | CLOSE_LOCK)) !=
+	       (COMMIT_LOCK | CLOSE_LOCK));
+	if (flags & COMMIT_LOCK)
+		return commit_locked_index(lock);
+	else if (flags & CLOSE_LOCK)
+		return close_lock_file(lock);
+	else
+		return ret;
+}
+
+static int write_split_index(struct index_state *istate,
+			     struct lock_file *lock,
+			     unsigned flags)
+{
+	int ret;
+	prepare_to_write_split_index(istate);
+	ret = do_write_locked_index(istate, lock, flags);
+	finish_writing_split_index(istate);
+	return ret;
+}
+
+static char *temporary_sharedindex;
+
+static void remove_temporary_sharedindex(void)
+{
+	if (temporary_sharedindex) {
+		unlink_or_warn(temporary_sharedindex);
+		free(temporary_sharedindex);
+		temporary_sharedindex = NULL;
+	}
+}
+
+static void remove_temporary_sharedindex_on_signal(int signo)
+{
+	remove_temporary_sharedindex();
+	sigchain_pop(signo);
+	raise(signo);
+}
+
+static int write_shared_index(struct index_state *istate,
+			      struct lock_file *lock, unsigned flags)
+{
+	struct split_index *si = istate->split_index;
+	static int installed_handler;
+	int fd, ret;
+
+	temporary_sharedindex = git_pathdup("sharedindex_XXXXXX");
+	fd = mkstemp(temporary_sharedindex);
+	if (fd < 0) {
+		free(temporary_sharedindex);
+		temporary_sharedindex = NULL;
+		hashclr(si->base_sha1);
+		return do_write_locked_index(istate, lock, flags);
+	}
+	if (!installed_handler) {
+		atexit(remove_temporary_sharedindex);
+		sigchain_push_common(remove_temporary_sharedindex_on_signal);
+	}
+	move_cache_to_base_index(istate);
+	ret = do_write_index(si->base, fd, 1);
+	close(fd);
+	if (ret) {
+		remove_temporary_sharedindex();
+		return ret;
+	}
+	ret = rename(temporary_sharedindex,
+		     git_path("sharedindex.%s", sha1_to_hex(si->base->sha1)));
+	free(temporary_sharedindex);
+	temporary_sharedindex = NULL;
+	if (!ret)
+		hashcpy(si->base_sha1, si->base->sha1);
+	return ret;
+}
+
+int write_locked_index(struct index_state *istate, struct lock_file *lock,
+		       unsigned flags)
+{
+	struct split_index *si = istate->split_index;
+
+	if (!si || alternate_index_output ||
+	    (istate->cache_changed & ~EXTMASK)) {
+		if (si)
+			hashclr(si->base_sha1);
+		return do_write_locked_index(istate, lock, flags);
+	}
+
+	if (getenv("GIT_TEST_SPLIT_INDEX")) {
+		int v = si->base_sha1[0];
+		if ((v & 15) < 6)
+			istate->cache_changed |= SPLIT_INDEX_ORDERED;
+	}
+	if (istate->cache_changed & SPLIT_INDEX_ORDERED) {
+		int ret = write_shared_index(istate, lock, flags);
+		if (ret)
+			return ret;
+	}
+
+	return write_split_index(istate, lock, flags);
+}
+
 /*
  * Read the index file that is potentially unmerged into given
  * index_state, dropping any unmerged entries.  Returns true if
@@ -1953,7 +2113,6 @@ int read_index_unmerged(struct index_state *istate)
 		if (add_index_entry(istate, new_ce, 0))
 			return error("%s: cannot drop to stage #0",
 				     new_ce->name);
-		i = index_name_pos(istate, new_ce->name, len);
 	}
 	return unmerged;
 }

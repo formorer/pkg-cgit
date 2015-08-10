@@ -7,6 +7,7 @@
  *
  */
 #include "cache.h"
+#include "lockfile.h"
 #include "cache-tree.h"
 #include "quote.h"
 #include "blob.h"
@@ -435,7 +436,7 @@ static unsigned long linelen(const char *buffer, unsigned long size)
 
 static int is_dev_null(const char *str)
 {
-	return !memcmp("/dev/null", str, 9) && isspace(str[9]);
+	return skip_prefix(str, "/dev/null", &str) && isspace(*str);
 }
 
 #define TERM_SPACE	1
@@ -656,11 +657,6 @@ static size_t diff_timestamp_len(const char *line, size_t len)
 	return line + len - end;
 }
 
-static char *null_strdup(const char *s)
-{
-	return s ? xstrdup(s) : NULL;
-}
-
 static char *find_name_common(const char *line, const char *def,
 			      int p_value, const char *end, int terminate)
 {
@@ -683,10 +679,10 @@ static char *find_name_common(const char *line, const char *def,
 			start = line;
 	}
 	if (!start)
-		return squash_slash(null_strdup(def));
+		return squash_slash(xstrdup_or_null(def));
 	len = line - start;
 	if (!len)
-		return squash_slash(null_strdup(def));
+		return squash_slash(xstrdup_or_null(def));
 
 	/*
 	 * Generally we prefer the shorter name, especially
@@ -908,7 +904,7 @@ static void parse_traditional_patch(const char *first, const char *second, struc
 			patch->old_name = name;
 		} else {
 			patch->old_name = name;
-			patch->new_name = null_strdup(name);
+			patch->new_name = xstrdup_or_null(name);
 		}
 	}
 	if (!name)
@@ -997,7 +993,7 @@ static int gitdiff_delete(const char *line, struct patch *patch)
 {
 	patch->is_delete = 1;
 	free(patch->old_name);
-	patch->old_name = null_strdup(patch->def_name);
+	patch->old_name = xstrdup_or_null(patch->def_name);
 	return gitdiff_oldmode(line, patch);
 }
 
@@ -1005,7 +1001,7 @@ static int gitdiff_newfile(const char *line, struct patch *patch)
 {
 	patch->is_new = 1;
 	free(patch->new_name);
-	patch->new_name = null_strdup(patch->def_name);
+	patch->new_name = xstrdup_or_null(patch->def_name);
 	return gitdiff_newmode(line, patch);
 }
 
@@ -1922,6 +1918,66 @@ static int parse_binary(char *buffer, unsigned long size, struct patch *patch)
 	return used;
 }
 
+static void prefix_one(char **name)
+{
+	char *old_name = *name;
+	if (!old_name)
+		return;
+	*name = xstrdup(prefix_filename(prefix, prefix_length, *name));
+	free(old_name);
+}
+
+static void prefix_patch(struct patch *p)
+{
+	if (!prefix || p->is_toplevel_relative)
+		return;
+	prefix_one(&p->new_name);
+	prefix_one(&p->old_name);
+}
+
+/*
+ * include/exclude
+ */
+
+static struct string_list limit_by_name;
+static int has_include;
+static void add_name_limit(const char *name, int exclude)
+{
+	struct string_list_item *it;
+
+	it = string_list_append(&limit_by_name, name);
+	it->util = exclude ? NULL : (void *) 1;
+}
+
+static int use_patch(struct patch *p)
+{
+	const char *pathname = p->new_name ? p->new_name : p->old_name;
+	int i;
+
+	/* Paths outside are not touched regardless of "--include" */
+	if (0 < prefix_length) {
+		int pathlen = strlen(pathname);
+		if (pathlen <= prefix_length ||
+		    memcmp(prefix, pathname, prefix_length))
+			return 0;
+	}
+
+	/* See if it matches any of exclude/include rule */
+	for (i = 0; i < limit_by_name.nr; i++) {
+		struct string_list_item *it = &limit_by_name.items[i];
+		if (!wildmatch(it->string, pathname, 0, NULL))
+			return (it->util != NULL);
+	}
+
+	/*
+	 * If we had any include, a path that does not match any rule is
+	 * not used.  Otherwise, we saw bunch of exclude rules (or none)
+	 * and such a path is used.
+	 */
+	return !has_include;
+}
+
+
 /*
  * Read the patch text in "buffer" that extends for "size" bytes; stop
  * reading after seeing a single patch (i.e. changes to a single file).
@@ -1937,9 +1993,14 @@ static int parse_chunk(char *buffer, unsigned long size, struct patch *patch)
 	if (offset < 0)
 		return offset;
 
-	patch->ws_rule = whitespace_rule(patch->new_name
-					 ? patch->new_name
-					 : patch->old_name);
+	prefix_patch(patch);
+
+	if (!use_patch(patch))
+		patch->ws_rule = 0;
+	else
+		patch->ws_rule = whitespace_rule(patch->new_name
+						 ? patch->new_name
+						 : patch->old_name);
 
 	patchsize = parse_single_patch(buffer + offset + hdrsize,
 				       size - offset - hdrsize, patch);
@@ -2171,6 +2232,12 @@ static void update_pre_post_images(struct image *preimage,
 		ctx++;
 	}
 
+	if (postlen
+	    ? postlen < new - postimage->buf
+	    : postimage->len < new - postimage->buf)
+		die("BUG: caller miscounted postlen: asked %d, orig = %d, used = %d",
+		    (int)postlen, (int) postimage->len, (int)(new - postimage->buf));
+
 	/* Fix the length of the whole thing */
 	postimage->len = new - postimage->buf;
 	postimage->nr -= reduced;
@@ -2326,10 +2393,27 @@ static int match_fragment(struct image *img,
 
 	/*
 	 * The hunk does not apply byte-by-byte, but the hash says
-	 * it might with whitespace fuzz. We haven't been asked to
+	 * it might with whitespace fuzz. We weren't asked to
 	 * ignore whitespace, we were asked to correct whitespace
 	 * errors, so let's try matching after whitespace correction.
 	 *
+	 * While checking the preimage against the target, whitespace
+	 * errors in both fixed, we count how large the corresponding
+	 * postimage needs to be.  The postimage prepared by
+	 * apply_one_fragment() has whitespace errors fixed on added
+	 * lines already, but the common lines were propagated as-is,
+	 * which may become longer when their whitespace errors are
+	 * fixed.
+	 */
+
+	/* First count added lines in postimage */
+	postlen = 0;
+	for (i = 0; i < postimage->nr; i++) {
+		if (!(postimage->line[i].flag & LINE_COMMON))
+			postlen += postimage->line[i].len;
+	}
+
+	/*
 	 * The preimage may extend beyond the end of the file,
 	 * but in this loop we will only handle the part of the
 	 * preimage that falls within the file.
@@ -2337,7 +2421,6 @@ static int match_fragment(struct image *img,
 	strbuf_init(&fixed, preimage->len + 1);
 	orig = preimage->buf;
 	target = img->buf + try;
-	postlen = 0;
 	for (i = 0; i < preimage_limit; i++) {
 		size_t oldlen = preimage->line[i].len;
 		size_t tgtlen = img->line[try_lno + i].len;
@@ -2365,7 +2448,10 @@ static int match_fragment(struct image *img,
 		match = (tgtfix.len == fixed.len - fixstart &&
 			 !memcmp(tgtfix.buf, fixed.buf + fixstart,
 					     fixed.len - fixstart));
-		postlen += tgtfix.len;
+
+		/* Add the length if this is common with the postimage */
+		if (preimage->line[i].flag & LINE_COMMON)
+			postlen += tgtfix.len;
 
 		strbuf_release(&tgtfix);
 		if (!match)
@@ -2563,7 +2649,7 @@ static void update_image(struct image *img,
 		 * NOTE: this knows that we never call remove_first_line()
 		 * on anything other than pre/post image.
 		 */
-		img->line = xrealloc(img->line, nr * sizeof(*img->line));
+		REALLOC_ARRAY(img->line, nr);
 		img->line_allocated = img->line;
 	}
 	if (preimage_limit != postimage->nr)
@@ -3664,7 +3750,7 @@ static void build_fake_ancestor(struct patch *list, const char *filename)
 			if (!preimage_sha1_in_gitlink_patch(patch, sha1))
 				; /* ok, the textual part looks sane */
 			else
-				die("sha1 information is lacking or useless for submoule %s",
+				die("sha1 information is lacking or useless for submodule %s",
 				    name);
 		} else if (!get_sha1_blob(patch->old_sha1_prefix, sha1)) {
 			; /* ok */
@@ -4115,7 +4201,7 @@ static int write_out_results(struct patch *list)
 	if (cpath.nr) {
 		struct string_list_item *item;
 
-		sort_string_list(&cpath);
+		string_list_sort(&cpath);
 		for_each_string_list_item(item, &cpath)
 			fprintf(stderr, "U %s\n", item->string);
 		string_list_clear(&cpath, 0);
@@ -4127,64 +4213,6 @@ static int write_out_results(struct patch *list)
 }
 
 static struct lock_file lock_file;
-
-static struct string_list limit_by_name;
-static int has_include;
-static void add_name_limit(const char *name, int exclude)
-{
-	struct string_list_item *it;
-
-	it = string_list_append(&limit_by_name, name);
-	it->util = exclude ? NULL : (void *) 1;
-}
-
-static int use_patch(struct patch *p)
-{
-	const char *pathname = p->new_name ? p->new_name : p->old_name;
-	int i;
-
-	/* Paths outside are not touched regardless of "--include" */
-	if (0 < prefix_length) {
-		int pathlen = strlen(pathname);
-		if (pathlen <= prefix_length ||
-		    memcmp(prefix, pathname, prefix_length))
-			return 0;
-	}
-
-	/* See if it matches any of exclude/include rule */
-	for (i = 0; i < limit_by_name.nr; i++) {
-		struct string_list_item *it = &limit_by_name.items[i];
-		if (!wildmatch(it->string, pathname, 0, NULL))
-			return (it->util != NULL);
-	}
-
-	/*
-	 * If we had any include, a path that does not match any rule is
-	 * not used.  Otherwise, we saw bunch of exclude rules (or none)
-	 * and such a path is used.
-	 */
-	return !has_include;
-}
-
-
-static void prefix_one(char **name)
-{
-	char *old_name = *name;
-	if (!old_name)
-		return;
-	*name = xstrdup(prefix_filename(prefix, prefix_length, *name));
-	free(old_name);
-}
-
-static void prefix_patches(struct patch *p)
-{
-	if (!prefix || p->is_toplevel_relative)
-		return;
-	for ( ; p; p = p->next) {
-		prefix_one(&p->new_name);
-		prefix_one(&p->old_name);
-	}
-}
 
 #define INACCURATE_EOF	(1<<0)
 #define RECOUNT		(1<<1)
@@ -4211,8 +4239,6 @@ static int apply_patch(int fd, const char *filename, int options)
 			break;
 		if (apply_in_reverse)
 			reverse_patches(patch);
-		if (prefix)
-			prefix_patches(patch);
 		if (use_patch(patch)) {
 			patch_stats(patch);
 			*listp = patch;
@@ -4270,13 +4296,11 @@ static int apply_patch(int fd, const char *filename, int options)
 	return 0;
 }
 
-static int git_apply_config(const char *var, const char *value, void *cb)
+static void git_apply_config(void)
 {
-	if (!strcmp(var, "apply.whitespace"))
-		return git_config_string(&apply_default_whitespace, var, value);
-	else if (!strcmp(var, "apply.ignorewhitespace"))
-		return git_config_string(&apply_default_ignorewhitespace, var, value);
-	return git_default_config(var, value, cb);
+	git_config_get_string_const("apply.whitespace", &apply_default_whitespace);
+	git_config_get_string_const("apply.ignorewhitespace", &apply_default_ignorewhitespace);
+	git_config(git_default_config, NULL);
 }
 
 static int option_parse_exclude(const struct option *opt,
@@ -4424,7 +4448,7 @@ int cmd_apply(int argc, const char **argv, const char *prefix_)
 
 	prefix = prefix_;
 	prefix_length = prefix ? strlen(prefix) : 0;
-	git_config(git_apply_config, NULL);
+	git_apply_config();
 	if (apply_default_whitespace)
 		parse_whitespace_option(apply_default_whitespace);
 	if (apply_default_ignorewhitespace)

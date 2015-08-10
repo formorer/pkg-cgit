@@ -135,6 +135,9 @@ else
 	}
 fi
 
+: ${ASAN_OPTIONS=detect_leaks=0}
+export ASAN_OPTIONS
+
 # Protect ourselves from common misconfiguration to export
 # CDPATH into the environment
 unset CDPATH
@@ -164,7 +167,11 @@ _z40=0000000000000000000000000000000000000000
 LF='
 '
 
-export _x05 _x40 _z40 LF
+# UTF-8 ZERO WIDTH NON-JOINER, which HFS+ ignores
+# when case-folding filenames
+u200c=$(printf '\342\200\214')
+
+export _x05 _x40 _z40 LF u200c
 
 # Each test should start with something like this, after copyright notices:
 #
@@ -172,16 +179,8 @@ export _x05 _x40 _z40 LF
 # This test checks if command xyzzy does the right thing...
 # '
 # . ./test-lib.sh
-[ "x$ORIGINAL_TERM" != "xdumb" ] && (
-		TERM=$ORIGINAL_TERM &&
-		export TERM &&
-		[ -t 1 ] &&
-		tput bold >/dev/null 2>&1 &&
-		tput setaf 1 >/dev/null 2>&1 &&
-		tput sgr0 >/dev/null 2>&1
-	) &&
-	color=t
 
+unset color
 while test "$#" -ne 0
 do
 	case "$1" in
@@ -220,6 +219,10 @@ do
 	--root=*)
 		root=$(expr "z$1" : 'z[^=]*=\(.*\)')
 		shift ;;
+	-x)
+		trace=t
+		verbose=t
+		shift ;;
 	*)
 		echo "error: unknown test option '$1'" >&2; exit 1 ;;
 	esac
@@ -232,40 +235,6 @@ then
 elif test -n "$valgrind"
 then
 	verbose=t
-fi
-
-if test -n "$color"
-then
-	say_color () {
-		(
-		TERM=$ORIGINAL_TERM
-		export TERM
-		case "$1" in
-		error)
-			tput bold; tput setaf 1;; # bold red
-		skip)
-			tput setaf 4;; # blue
-		warn)
-			tput setaf 3;; # brown/yellow
-		pass)
-			tput setaf 2;; # green
-		info)
-			tput setaf 6;; # cyan
-		*)
-			test -n "$quiet" && return;;
-		esac
-		shift
-		printf "%s" "$*"
-		tput sgr0
-		echo
-		)
-	}
-else
-	say_color() {
-		test -z "$1" && test -n "$quiet" && return
-		shift
-		printf "%s\n" "$*"
-	}
 fi
 
 error () {
@@ -411,10 +380,39 @@ maybe_setup_valgrind () {
 	fi
 }
 
+# This is a separate function because some tests use
+# "return" to end a test_expect_success block early
+# (and we want to make sure we run any cleanup like
+# "set +x").
+test_eval_inner_ () {
+	# Do not add anything extra (including LF) after '$*'
+	eval "
+		test \"$trace\" = t && set -x
+		$*"
+}
+
 test_eval_ () {
-	# This is a separate function because some tests use
-	# "return" to end a test_expect_success block early.
-	eval </dev/null >&3 2>&4 "$*"
+	# We run this block with stderr redirected to avoid extra cruft
+	# during a "-x" trace. Once in "set -x" mode, we cannot prevent
+	# the shell from printing the "set +x" to turn it off (nor the saving
+	# of $? before that). But we can make sure that the output goes to
+	# /dev/null.
+	#
+	# The test itself is run with stderr put back to &4 (so either to
+	# /dev/null, or to the original stderr if --verbose was used).
+	{
+		test_eval_inner_ "$@" </dev/null >&3 2>&4
+		test_eval_ret_=$?
+		if test "$trace" = t
+		then
+			set +x
+			if test "$test_eval_ret_" != 0
+			then
+				say_color error >&4 "error: last command exited with \$?=$test_eval_ret_"
+			fi
+		fi
+	} 2>/dev/null
+	return $test_eval_ret_
 }
 
 test_run_ () {
@@ -425,7 +423,8 @@ test_run_ () {
 	eval_ret=$?
 	teardown_malloc_check
 
-	if test -z "$immediate" || test $eval_ret = 0 || test -n "$expecting_failure"
+	if test -z "$immediate" || test $eval_ret = 0 ||
+	   test -n "$expecting_failure" && test "$test_cleanup" != ":"
 	then
 		setup_malloc_check
 		test_eval_ "$test_cleanup"
@@ -527,7 +526,7 @@ test_done () {
 		then
 			error "Can't use skip_all after running some tests"
 		fi
-		[ -z "$skip_all" ] || skip_all=" # SKIP $skip_all"
+		test -z "$skip_all" || skip_all=" # SKIP $skip_all"
 
 		if test $test_external_has_tap -eq 0
 		then
@@ -697,7 +696,54 @@ rm -fr "$TRASH_DIRECTORY" || {
 }
 
 HOME="$TRASH_DIRECTORY"
-export HOME
+GNUPGHOME="$HOME/gnupg-home-not-used"
+export HOME GNUPGHOME
+
+# run the tput tests *after* changing HOME (in case ncurses needs
+# ~/.terminfo for $TERM)
+test -n "${color+set}" || test "x$ORIGINAL_TERM" != "xdumb" && (
+		TERM=$ORIGINAL_TERM &&
+		export TERM &&
+		test -t 1 &&
+		tput bold >/dev/null 2>&1 &&
+		tput setaf 1 >/dev/null 2>&1 &&
+		tput sgr0 >/dev/null 2>&1
+	) &&
+	color=t
+
+if test -n "$color"
+then
+	say_color () {
+		(
+		TERM=$ORIGINAL_TERM
+		export TERM
+		case "$1" in
+		error)
+			tput bold; tput setaf 1;; # bold red
+		skip)
+			tput setaf 4;; # blue
+		warn)
+			tput setaf 3;; # brown/yellow
+		pass)
+			tput setaf 2;; # green
+		info)
+			tput setaf 6;; # cyan
+		*)
+			test -n "$quiet" && return;;
+		esac
+		shift
+		printf "%s" "$*"
+		tput sgr0
+		echo
+		)
+	}
+else
+	say_color() {
+		test -z "$1" && test -n "$quiet" && return
+		shift
+		printf "%s\n" "$*"
+	}
+fi
 
 if test -z "$TEST_NO_CREATE_REPO"
 then
@@ -754,7 +800,7 @@ case $(uname -s) in
 	# backslashes in pathspec are converted to '/'
 	# exec does not inherit the PID
 	test_set_prereq MINGW
-	test_set_prereq NOT_CYGWIN
+	test_set_prereq NATIVE_CRLF
 	test_set_prereq SED_STRIPS_CR
 	test_set_prereq GREP_STRIPS_CR
 	GIT_TEST_CMP=mingw_test_cmp
@@ -762,7 +808,6 @@ case $(uname -s) in
 *CYGWIN*)
 	test_set_prereq POSIXPERM
 	test_set_prereq EXECKEEPSPID
-	test_set_prereq NOT_MINGW
 	test_set_prereq CYGWIN
 	test_set_prereq SED_STRIPS_CR
 	test_set_prereq GREP_STRIPS_CR
@@ -771,8 +816,6 @@ case $(uname -s) in
 	test_set_prereq POSIXPERM
 	test_set_prereq BSLASHPSPEC
 	test_set_prereq EXECKEEPSPID
-	test_set_prereq NOT_MINGW
-	test_set_prereq NOT_CYGWIN
 	;;
 esac
 
@@ -864,9 +907,41 @@ test_lazy_prereq AUTOIDENT '
 	git var GIT_AUTHOR_IDENT
 '
 
-# When the tests are run as root, permission tests will report that
-# things are writable when they shouldn't be.
-test -w / || test_set_prereq SANITY
+test_lazy_prereq EXPENSIVE '
+	test -n "$GIT_TEST_LONG"
+'
+
+test_lazy_prereq USR_BIN_TIME '
+	test -x /usr/bin/time
+'
+
+test_lazy_prereq NOT_ROOT '
+	uid=$(id -u) &&
+	test "$uid" != 0
+'
+
+# On a filesystem that lacks SANITY, a file can be deleted even if
+# the containing directory doesn't have write permissions, or a file
+# can be accessed even if the containing directory doesn't have read
+# or execute permissions, causing our tests that validate that Git
+# works sensibly in such situations.
+test_lazy_prereq SANITY '
+	mkdir SANETESTD.1 SANETESTD.2 &&
+
+	chmod +w SANETESTD.1 SANETESTD.2 &&
+	>SANETESTD.1/x 2>SANETESTD.2/x &&
+	chmod -w SANETESTD.1 &&
+	chmod -rx SANETESTD.2 ||
+	error "bug in test sript: cannot prepare SANETESTD"
+
+	! rm SANETESTD.1/x && ! test -f SANETESTD.2/x
+	status=$?
+
+	chmod +rwx SANETESTD.1 SANETESTD.2 &&
+	rm -rf SANETESTD.1 SANETESTD.2 ||
+	error "bug in test sript: cannot clean SANETESTD"
+	return $status
+'
 
 GIT_UNZIP=${GIT_UNZIP:-unzip}
 test_lazy_prereq UNZIP '

@@ -1,3 +1,4 @@
+#include "git-compat-util.h"
 #include "http.h"
 #include "pack.h"
 #include "sideband.h"
@@ -61,6 +62,9 @@ static const char *user_agent;
 
 static struct credential cert_auth = CREDENTIAL_INIT;
 static int ssl_cert_password_required;
+#ifdef LIBCURL_CAN_HANDLE_AUTH_ANY
+static unsigned long http_auth_methods = CURLAUTH_ANY;
+#endif
 
 static struct curl_slist *pragma_header;
 static struct curl_slist *no_pragma_header;
@@ -300,6 +304,9 @@ static CURL *get_curl_handle(void)
 {
 	CURL *result = curl_easy_init();
 
+	if (!result)
+		die("curl_easy_init failed");
+
 	if (!curl_ssl_verify) {
 		curl_easy_setopt(result, CURLOPT_SSL_VERIFYPEER, 0);
 		curl_easy_setopt(result, CURLOPT_SSL_VERIFYHOST, 0);
@@ -399,7 +406,8 @@ void http_init(struct remote *remote, const char *url, int proactive_auth)
 	git_config(urlmatch_config_entry, &config);
 	free(normalized_url);
 
-	curl_global_init(CURL_GLOBAL_ALL);
+	if (curl_global_init(CURL_GLOBAL_ALL) != CURLE_OK)
+		die("curl_global_init failed");
 
 	http_proactive_auth = proactive_auth;
 
@@ -417,10 +425,8 @@ void http_init(struct remote *remote, const char *url, int proactive_auth)
 	}
 
 	curlm = curl_multi_init();
-	if (curlm == NULL) {
-		fprintf(stderr, "Error creating curl multi handle.\n");
-		exit(1);
-	}
+	if (!curlm)
+		die("curl_multi_init failed");
 #endif
 
 	if (getenv("GIT_SSL_NO_VERIFY"))
@@ -577,6 +583,9 @@ struct active_request_slot *get_active_slot(void)
 	curl_easy_setopt(slot->curl, CURLOPT_UPLOAD, 0);
 	curl_easy_setopt(slot->curl, CURLOPT_HTTPGET, 1);
 	curl_easy_setopt(slot->curl, CURLOPT_FAILONERROR, 1);
+#ifdef LIBCURL_CAN_HANDLE_AUTH_ANY
+	curl_easy_setopt(slot->curl, CURLOPT_HTTPAUTH, http_auth_methods);
+#endif
 	if (http_auth.password)
 		init_curl_http_auth(slot->curl);
 
@@ -867,6 +876,9 @@ int handle_curl_result(struct slot_results *results)
 			credential_reject(&http_auth);
 			return HTTP_NOAUTH;
 		} else {
+#ifdef LIBCURL_CAN_HANDLE_AUTH_ANY
+			http_auth_methods &= ~CURLAUTH_GSSNEGOTIATE;
+#endif
 			return HTTP_REAUTH;
 		}
 	} else {
@@ -905,6 +917,84 @@ static CURLcode curlinfo_strbuf(CURL *curl, CURLINFO info, struct strbuf *buf)
 		strbuf_addstr(buf, ptr);
 	return ret;
 }
+
+/*
+ * Check for and extract a content-type parameter. "raw"
+ * should be positioned at the start of the potential
+ * parameter, with any whitespace already removed.
+ *
+ * "name" is the name of the parameter. The value is appended
+ * to "out".
+ */
+static int extract_param(const char *raw, const char *name,
+			 struct strbuf *out)
+{
+	size_t len = strlen(name);
+
+	if (strncasecmp(raw, name, len))
+		return -1;
+	raw += len;
+
+	if (*raw != '=')
+		return -1;
+	raw++;
+
+	while (*raw && !isspace(*raw) && *raw != ';')
+		strbuf_addch(out, *raw++);
+	return 0;
+}
+
+/*
+ * Extract a normalized version of the content type, with any
+ * spaces suppressed, all letters lowercased, and no trailing ";"
+ * or parameters.
+ *
+ * Note that we will silently remove even invalid whitespace. For
+ * example, "text / plain" is specifically forbidden by RFC 2616,
+ * but "text/plain" is the only reasonable output, and this keeps
+ * our code simple.
+ *
+ * If the "charset" argument is not NULL, store the value of any
+ * charset parameter there.
+ *
+ * Example:
+ *   "TEXT/PLAIN; charset=utf-8" -> "text/plain", "utf-8"
+ *   "text / plain" -> "text/plain"
+ */
+static void extract_content_type(struct strbuf *raw, struct strbuf *type,
+				 struct strbuf *charset)
+{
+	const char *p;
+
+	strbuf_reset(type);
+	strbuf_grow(type, raw->len);
+	for (p = raw->buf; *p; p++) {
+		if (isspace(*p))
+			continue;
+		if (*p == ';') {
+			p++;
+			break;
+		}
+		strbuf_addch(type, tolower(*p));
+	}
+
+	if (!charset)
+		return;
+
+	strbuf_reset(charset);
+	while (*p) {
+		while (isspace(*p) || *p == ';')
+			p++;
+		if (!extract_param(p, "charset", charset))
+			return;
+		while (*p && !isspace(*p))
+			p++;
+	}
+
+	if (!charset->len && starts_with(type->buf, "text/"))
+		strbuf_addstr(charset, "ISO-8859-1");
+}
+
 
 /* http_request() targets */
 #define HTTP_REQUEST_STRBUF	0
@@ -1157,7 +1247,7 @@ static int fetch_and_setup_pack_index(struct packed_git **packs_head,
 	int ret;
 
 	if (has_pack_index(sha1)) {
-		new_pack = parse_pack_index(sha1, NULL);
+		new_pack = parse_pack_index(sha1, sha1_pack_index_name(sha1));
 		if (!new_pack)
 			return -1; /* parse_pack_index() already issued error message */
 		goto add_pack;
@@ -1252,7 +1342,7 @@ int finish_http_pack_request(struct http_pack_request *preq)
 	struct packed_git **lst;
 	struct packed_git *p = preq->target;
 	char *tmp_idx;
-	struct child_process ip;
+	struct child_process ip = CHILD_PROCESS_INIT;
 	const char *ip_argv[8];
 
 	close_pack_index(p);
@@ -1275,7 +1365,6 @@ int finish_http_pack_request(struct http_pack_request *preq)
 	ip_argv[3] = preq->tmpfile;
 	ip_argv[4] = NULL;
 
-	memset(&ip, 0, sizeof(ip));
 	ip.argv = ip_argv;
 	ip.git_cmd = 1;
 	ip.no_stdin = 1;

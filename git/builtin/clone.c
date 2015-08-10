@@ -9,6 +9,7 @@
  */
 
 #include "builtin.h"
+#include "lockfile.h"
 #include "parse-options.h"
 #include "fetch-pack.h"
 #include "refs.h"
@@ -48,6 +49,7 @@ static int option_verbosity;
 static int option_progress = -1;
 static struct string_list option_config;
 static struct string_list option_reference;
+static int option_dissociate;
 
 static int opt_parse_reference(const struct option *opt, const char *arg, int unset)
 {
@@ -93,6 +95,8 @@ static struct option builtin_clone_options[] = {
 		    N_("create a shallow clone of that depth")),
 	OPT_BOOL(0, "single-branch", &option_single_branch,
 		    N_("clone only one branch, HEAD or --branch")),
+	OPT_BOOL(0, "dissociate", &option_dissociate,
+		 N_("use --reference only while cloning")),
 	OPT_STRING(0, "separate-git-dir", &real_git_dir, N_("gitdir"),
 		   N_("separate git dir from working tree")),
 	OPT_STRING_LIST('c', "config", &option_config, N_("key=value"),
@@ -390,7 +394,6 @@ static void clone_local(const char *src_repo, const char *dest_repo)
 
 static const char *junk_work_tree;
 static const char *junk_git_dir;
-static pid_t junk_pid;
 static enum {
 	JUNK_LEAVE_NONE,
 	JUNK_LEAVE_REPO,
@@ -417,8 +420,6 @@ static void remove_junk(void)
 		break;
 	}
 
-	if (getpid() != junk_pid)
-		return;
 	if (junk_git_dir) {
 		strbuf_addstr(&sb, junk_git_dir);
 		remove_dir_recursively(&sb, 0);
@@ -621,7 +622,7 @@ static int checkout(void)
 	if (option_no_checkout)
 		return 0;
 
-	head = resolve_refdup("HEAD", sha1, 1, NULL);
+	head = resolve_refdup("HEAD", RESOLVE_REF_READING, sha1, NULL);
 	if (!head) {
 		warning(_("remote HEAD refers to nonexistent ref, "
 			  "unable to checkout.\n"));
@@ -685,9 +686,10 @@ static void write_config(struct string_list *config)
 	}
 }
 
-static void write_refspec_config(const char* src_ref_prefix,
-		const struct ref* our_head_points_at,
-		const struct ref* remote_head_points_at, struct strbuf* branch_top)
+static void write_refspec_config(const char *src_ref_prefix,
+		const struct ref *our_head_points_at,
+		const struct ref *remote_head_points_at,
+		struct strbuf *branch_top)
 {
 	struct strbuf key = STRBUF_INIT;
 	struct strbuf value = STRBUF_INIT;
@@ -733,6 +735,16 @@ static void write_refspec_config(const char* src_ref_prefix,
 	strbuf_release(&value);
 }
 
+static void dissociate_from_references(void)
+{
+	static const char* argv[] = { "repack", "-a", "-d", NULL };
+
+	if (run_command_v_opt(argv, RUN_GIT_CMD|RUN_COMMAND_NO_STDIN))
+		die(_("cannot repack to clean up"));
+	if (unlink(git_path("objects/info/alternates")) && errno != ENOENT)
+		die_errno(_("cannot unlink temporary alternates file"));
+}
+
 int cmd_clone(int argc, const char **argv, const char *prefix)
 {
 	int is_bundle = 0, is_local;
@@ -754,8 +766,6 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
 
 	struct refspec *refspec;
 	const char *fetch_pattern;
-
-	junk_pid = getpid();
 
 	packet_trace_identity("clone");
 	argc = parse_options(argc, argv, prefix, builtin_clone_options,
@@ -892,6 +902,10 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
 
 	if (option_reference.nr)
 		setup_reference();
+	else if (option_dissociate) {
+		warning(_("--dissociate given, but there is no --reference"));
+		option_dissociate = 0;
+	}
 
 	fetch_pattern = value.buf;
 	refspec = parse_fetch_refspec(1, &fetch_pattern);
@@ -992,6 +1006,9 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
 	transport_unlock_pack(transport);
 	transport_disconnect(transport);
 
+	if (option_dissociate)
+		dissociate_from_references();
+
 	junk_mode = JUNK_LEAVE_REPO;
 	err = checkout();
 
@@ -1000,5 +1017,7 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
 	strbuf_release(&key);
 	strbuf_release(&value);
 	junk_mode = JUNK_LEAVE_ALL;
+
+	free(refspec);
 	return err;
 }

@@ -12,6 +12,16 @@
 #include "sha1-array.h"
 #include "revision.h"
 
+static int compare_paths(const struct combine_diff_path *one,
+			  const struct diff_filespec *two)
+{
+	if (!S_ISDIR(one->mode) && !S_ISDIR(two->mode))
+		return strcmp(one->path, two->path);
+
+	return base_name_compare(one->path, strlen(one->path), one->mode,
+				 two->path, strlen(two->path), two->mode);
+}
+
 static struct combine_diff_path *intersect_paths(struct combine_diff_path *curr, int n, int num_parent)
 {
 	struct diff_queue_struct *q = &diff_queued_diff;
@@ -52,7 +62,7 @@ static struct combine_diff_path *intersect_paths(struct combine_diff_path *curr,
 	i = 0;
 	while ((p = *tail) != NULL) {
 		cmp = ((i >= q->nr)
-		       ? -1 : strcmp(p->path, q->queue[i]->two->path));
+		       ? -1 : compare_paths(p, q->queue[i]->two));
 
 		if (cmp < 0) {
 			/* p->path not in q->queue[]; drop it */
@@ -1310,6 +1320,23 @@ void diff_tree_combined(const unsigned char *sha1,
 	struct diff_options diffopts;
 	struct combine_diff_path *p, *paths = NULL;
 	int i, num_paths, needsep, show_log_first, num_parent = parents->nr;
+	int need_generic_pathscan;
+
+	/* nothing to do, if no parents */
+	if (!num_parent)
+		return;
+
+	show_log_first = !!rev->loginfo && !rev->no_commit_id;
+	needsep = 0;
+	if (show_log_first) {
+		show_log(rev);
+
+		if (rev->verbose_header && opt->output_format &&
+		    opt->output_format != DIFF_FORMAT_NO_OUTPUT &&
+		    !commit_format_is_empty(rev->commit_format))
+			printf("%s%c", diff_line_prefix(opt),
+			       opt->line_termination);
+	}
 
 	diffopts = *opt;
 	copy_pathspec(&diffopts.pathspec, &opt->pathspec);

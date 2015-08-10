@@ -296,8 +296,8 @@ int mingw_open (const char *filename, int oflags, ...)
 
 	fd = open(filename, oflags, mode);
 
-	if (fd < 0 && (oflags & O_CREAT) && errno == EACCES) {
-		DWORD attrs = GetFileAttributes(filename);
+	if (fd < 0 && (oflags & O_ACCMODE) != O_RDONLY && errno == EACCES) {
+		DWORD attrs = GetFileAttributesW(wfilename);
 		if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
 			errno = EISDIR;
 	}

@@ -1,11 +1,14 @@
+# The default target of this Makefile is...
+all::
+
 -include ../../config.mak.autogen
 -include ../../config.mak
 
 prefix ?= /usr/local
+gitexecdir ?= $(prefix)/libexec/git-core
 mandir ?= $(prefix)/share/man
-libexecdir ?= $(prefix)/libexec/git-core
-gitdir ?= $(shell git --exec-path)
 man1dir ?= $(mandir)/man1
+htmldir ?= $(prefix)/share/doc/git-doc
 
 gitver ?= $(word 3,$(shell git --version))
 
@@ -23,7 +26,7 @@ GIT_SUBTREE_XML := git-subtree.xml
 GIT_SUBTREE_TXT := git-subtree.txt
 GIT_SUBTREE_HTML := git-subtree.html
 
-all: $(GIT_SUBTREE)
+all:: $(GIT_SUBTREE)
 
 $(GIT_SUBTREE): $(GIT_SUBTREE_SH)
 	cp $< $@ && chmod +x $@
@@ -34,11 +37,15 @@ install: $(GIT_SUBTREE)
 	$(INSTALL) -d -m 755 $(DESTDIR)$(libexecdir)
 	$(INSTALL) -m 755 $(GIT_SUBTREE) $(DESTDIR)$(libexecdir)
 
-install-doc: install-man
+install-doc: install-man install-html
 
 install-man: $(GIT_SUBTREE_DOC)
 	$(INSTALL) -d -m 755 $(DESTDIR)$(man1dir)
 	$(INSTALL) -m 644 $^ $(DESTDIR)$(man1dir)
+
+install-html: $(GIT_SUBTREE_HTML)
+	$(INSTALL) -d -m 755 $(DESTDIR)$(htmldir)
+	$(INSTALL) -m 644 $^ $(DESTDIR)$(htmldir)
 
 $(GIT_SUBTREE_DOC): $(GIT_SUBTREE_XML)
 	xmlto -m $(MANPAGE_NORMAL_XSL)  man $^
