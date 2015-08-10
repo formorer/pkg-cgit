@@ -10,7 +10,8 @@ SYNOPSIS
 --------
 [verse]
 'git push' [--all | --mirror | --tags] [--follow-tags] [-n | --dry-run] [--receive-pack=<git-receive-pack>]
-	   [--repo=<repository>] [-f | --force] [--prune] [-v | --verbose] [-u | --set-upstream]
+	   [--repo=<repository>] [-f | --force] [--prune] [-v | --verbose]
+	   [-u | --set-upstream] [--signed]
 	   [--force-with-lease[=<refname>[:<expect>]]]
 	   [--no-verify] [<repository> [<refspec>...]]
 
@@ -129,6 +130,12 @@ already exists on the remote side.
 	from the remote but are pointing at commit-ish that are
 	reachable from the refs being pushed.
 
+--signed::
+	GPG-sign the push request to update refs on the receiving
+	side, to allow it to be checked by the hooks and/or be
+	logged.  See linkgit:git-receive-pack[1] for the details
+	on the receiving end.
+
 --receive-pack=<git-receive-pack>::
 --exec=<git-receive-pack>::
 	Path to the 'git-receive-pack' program on the remote
@@ -207,22 +214,8 @@ origin +master` to force a push to the `master` branch). See the
 `<refspec>...` section above for details.
 
 --repo=<repository>::
-	This option is only relevant if no <repository> argument is
-	passed in the invocation. In this case, 'git push' derives the
-	remote name from the current branch: If it tracks a remote
-	branch, then that remote repository is pushed to. Otherwise,
-	the name "origin" is used. For this latter case, this option
-	can be used to override the name "origin". In other words,
-	the difference between these two commands
-+
---------------------------
-git push public         #1
-git push --repo=public  #2
---------------------------
-+
-is that #1 always pushes to "public" whereas #2 pushes to "public"
-only if the current branch does not track a remote branch. This is
-useful if you write an alias or script around 'git push'.
+	This option is equivalent to the <repository> argument. If both
+	are specified, the command-line argument takes precedence.
 
 -u::
 --set-upstream::
