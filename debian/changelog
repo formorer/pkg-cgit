@@ -1,3 +1,15 @@
+cgit (0.11.2.git2.3.2-1) UNRELEASED; urgency=medium
+
+  * [7f8779f] Imported Upstream version 0.11.2.git2.3.2
+    Closes: #781299
+  * [3925a1b] Refresh patches
+  * [bb17f35] Refresh git tree
+  * [74e06fe] Bump standards version
+  * [778309b] Use debians rst2html and hilight 3.x (Closes: #765806)
+  * [33c654c] ship cache directory (Closes: #784608)
+
+ -- Alexander Wirt <formorer@debian.org>  Mon, 10 Aug 2015 19:31:10 +0200
+
 cgit (0.10.2.git2.0.1-3) unstable; urgency=medium
 
   * Initial upload
