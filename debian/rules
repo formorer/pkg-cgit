@@ -47,3 +47,7 @@ override_dh_auto_install:
 override_dh_auto_test:
 	chmod +x tests/*.sh
 	dh_auto_test
+
+override_dh_fixperms:
+	dh_fixperms
+	chown www-data:www-data $b/var/cache/cgit
