@@ -1,3 +1,15 @@
+cgit (0.11.2.git2.3.2-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * CVE-2016-1899: Reflected XSS and header injection in mimetype query
+    string (Closes: #812411)
+  * CVE-2016-1900: Stored cross site scripting and header injection in
+    filename parameter (Closes: #812411)
+  * CVE-2016-1901: Integer overflow resulting in buffer overflow
+    (Closes: #812411)
+
+ -- Salvatore Bonaccorso <carnil@debian.org>  Wed, 27 Jan 2016 20:54:12 +0100
+
 cgit (0.11.2.git2.3.2-1) unstable; urgency=medium
 
   * [7f8779f] Imported Upstream version 0.11.2.git2.3.2

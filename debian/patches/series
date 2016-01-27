@@ -8,3 +8,6 @@ hardening
 assume-highlight-version-3-in-filter-script
 add-highlighting-rules-to-cgit.css
 Use-debian-binary-name-rst2html
+ui-blob-Do-not-accept-mimetype-from-user.patch
+ui-shared-prevent-malicious-filename-from-injecting-.patch
+filter-avoid-integer-overflow-in-authenticate_post.patch
