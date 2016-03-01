@@ -8,12 +8,6 @@
 
 #include "cgit.h"
 #include "html.h"
-#include <unistd.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <string.h>
-#include <errno.h>
 
 /* Percent-encoding of each character, except: a-zA-Z0-9!$()*,./:;@- */
 static const char* url_escape_table[256] = {
@@ -125,13 +119,6 @@ void html_vtxtf(const char *format, va_list ap)
 	va_end(cp);
 	html_txt(buf.buf);
 	strbuf_release(&buf);
-}
-
-void html_status(int code, const char *msg, int more_headers)
-{
-	htmlf("Status: %d %s\n", code, msg);
-	if (!more_headers)
-		html("\n");
 }
 
 void html_txt(const char *txt)
@@ -250,6 +237,32 @@ void html_url_arg(const char *txt)
 	}
 	if (t != txt)
 		html(txt);
+}
+
+void html_header_arg_in_quotes(const char *txt)
+{
+	const char *t = txt;
+	while (t && *t) {
+		unsigned char c = *t;
+		const char *e = NULL;
+		if (c == '\\')
+			e = "\\\\";
+		else if (c == '\r')
+			e = "\\r";
+		else if (c == '\n')
+			e = "\\n";
+		else if (c == '"')
+			e = "\\\"";
+		if (e) {
+			html_raw(txt, t - txt);
+			html(e);
+			txt = t + 1;
+		}
+		t++;
+	}
+	if (t != txt)
+		html(txt);
+
 }
 
 void html_hidden(const char *name, const char *value)

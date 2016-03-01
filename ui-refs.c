@@ -63,7 +63,7 @@ static int print_branch(struct refinfo *ref)
 		return 1;
 	html("<tr><td>");
 	cgit_log_link(name, NULL, NULL, name, NULL, NULL, 0, NULL, NULL,
-		      ctx.qry.showmsg);
+		      ctx.qry.showmsg, 0);
 	html("</td><td>");
 
 	if (ref->object->type == OBJ_COMMIT) {
@@ -135,7 +135,7 @@ static int print_tag(struct refinfo *ref)
 		tag = (struct tag *)obj;
 		obj = tag->tagged;
 		info = ref->tag;
-		if (!tag || !info)
+		if (!info)
 			return 1;
 	}
 
@@ -236,7 +236,7 @@ void cgit_print_tags(int maxcount)
 
 void cgit_print_refs(void)
 {
-
+	cgit_print_layout_start();
 	html("<table class='list nowrap'>");
 
 	if (ctx.qry.path && starts_with(ctx.qry.path, "heads"))
@@ -249,4 +249,5 @@ void cgit_print_refs(void)
 		cgit_print_tags(0);
 	}
 	html("</table>");
+	cgit_print_layout_end();
 }

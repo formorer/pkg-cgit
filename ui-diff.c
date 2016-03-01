@@ -36,6 +36,7 @@ static struct fileinfo {
 
 static int use_ssdiff = 0;
 static struct diff_filepair *current_filepair;
+static const char *current_prefix;
 
 struct diff_filespec *cgit_get_current_old_file(void)
 {
@@ -132,11 +133,30 @@ static void count_diff_lines(char *line, int len)
 	}
 }
 
+static int show_filepair(struct diff_filepair *pair)
+{
+	/* Always show if we have no limiting prefix. */
+	if (!current_prefix)
+		return 1;
+
+	/* Show if either path in the pair begins with the prefix. */
+	if (starts_with(pair->one->path, current_prefix) ||
+	    starts_with(pair->two->path, current_prefix))
+		return 1;
+
+	/* Otherwise we don't want to show this filepair. */
+	return 0;
+}
+
 static void inspect_filepair(struct diff_filepair *pair)
 {
 	int binary = 0;
 	unsigned long old_size = 0;
 	unsigned long new_size = 0;
+
+	if (!show_filepair(pair))
+		return;
+
 	files++;
 	lines_added = 0;
 	lines_removed = 0;
@@ -279,6 +299,9 @@ static void filepair_cb(struct diff_filepair *pair)
 	int binary = 0;
 	linediff_fn print_line_fn = print_line;
 
+	if (!show_filepair(pair))
+		return;
+
 	current_filepair = pair;
 	if (use_ssdiff) {
 		cgit_ssdiff_header_begin();
@@ -365,26 +388,41 @@ void cgit_print_diff(const char *new_rev, const char *old_rev,
 	const unsigned char *old_tree_sha1, *new_tree_sha1;
 	diff_type difftype;
 
+	/*
+	 * If "follow" is set then the diff machinery needs to examine the
+	 * entire commit to detect renames so we must limit the paths in our
+	 * own callbacks and not pass the prefix to the diff machinery.
+	 */
+	if (ctx.qry.follow && ctx.cfg.enable_follow_links) {
+		current_prefix = prefix;
+		prefix = "";
+	} else {
+		current_prefix = NULL;
+	}
+
 	if (!new_rev)
 		new_rev = ctx.qry.head;
 	if (get_sha1(new_rev, new_rev_sha1)) {
-		cgit_print_error("Bad object name: %s", new_rev);
+		cgit_print_error_page(404, "Not found",
+			"Bad object name: %s", new_rev);
 		return;
 	}
 	commit = lookup_commit_reference(new_rev_sha1);
 	if (!commit || parse_commit(commit)) {
-		cgit_print_error("Bad commit: %s", sha1_to_hex(new_rev_sha1));
+		cgit_print_error_page(404, "Not found",
+			"Bad commit: %s", sha1_to_hex(new_rev_sha1));
 		return;
 	}
-	new_tree_sha1 = commit->tree->object.sha1;
+	new_tree_sha1 = commit->tree->object.oid.hash;
 
 	if (old_rev) {
 		if (get_sha1(old_rev, old_rev_sha1)) {
-			cgit_print_error("Bad object name: %s", old_rev);
+			cgit_print_error_page(404, "Not found",
+				"Bad object name: %s", old_rev);
 			return;
 		}
 	} else if (commit->parents && commit->parents->item) {
-		hashcpy(old_rev_sha1, commit->parents->item->object.sha1);
+		hashcpy(old_rev_sha1, commit->parents->item->object.oid.hash);
 	} else {
 		hashclr(old_rev_sha1);
 	}
@@ -392,10 +430,11 @@ void cgit_print_diff(const char *new_rev, const char *old_rev,
 	if (!is_null_sha1(old_rev_sha1)) {
 		commit2 = lookup_commit_reference(old_rev_sha1);
 		if (!commit2 || parse_commit(commit2)) {
-			cgit_print_error("Bad commit: %s", sha1_to_hex(old_rev_sha1));
+			cgit_print_error_page(404, "Not found",
+				"Bad commit: %s", sha1_to_hex(old_rev_sha1));
 			return;
 		}
-		old_tree_sha1 = commit2->tree->object.sha1;
+		old_tree_sha1 = commit2->tree->object.oid.hash;
 	} else {
 		old_tree_sha1 = NULL;
 	}
@@ -425,8 +464,10 @@ void cgit_print_diff(const char *new_rev, const char *old_rev,
 	difftype = ctx.qry.has_difftype ? ctx.qry.difftype : ctx.cfg.difftype;
 	use_ssdiff = difftype == DIFF_SSDIFF;
 
-	if (show_ctrls)
+	if (show_ctrls) {
+		cgit_print_layout_start();
 		cgit_print_diff_ctrls();
+	}
 
 	/*
 	 * Clicking on a link to a file in the diff stat should show a diff
@@ -454,4 +495,7 @@ void cgit_print_diff(const char *new_rev, const char *old_rev,
 	if (!use_ssdiff)
 		html("</td></tr>");
 	html("</table>");
+
+	if (show_ctrls)
+		cgit_print_layout_end();
 }

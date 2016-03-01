@@ -9,11 +9,11 @@
 #include "cgit.h"
 #include "ui-summary.h"
 #include "html.h"
-#include "ui-log.h"
-#include "ui-refs.h"
 #include "ui-blob.h"
+#include "ui-log.h"
+#include "ui-plain.h"
+#include "ui-refs.h"
 #include "ui-shared.h"
-#include <libgen.h>
 
 static int urls;
 
@@ -49,6 +49,7 @@ void cgit_print_summary(void)
 	if (ctx.repo->enable_log_linecount)
 		columns++;
 
+	cgit_print_layout_start();
 	html("<table summary='repository info' class='list nowrap'>");
 	cgit_print_branches(ctx.cfg.summary_branches);
 	htmlf("<tr class='nohover'><td colspan='%d'>&nbsp;</td></tr>", columns);
@@ -61,6 +62,7 @@ void cgit_print_summary(void)
 	urls = 0;
 	cgit_add_clone_urls(print_url);
 	html("</table>");
+	cgit_print_layout_end();
 }
 
 /* The caller must free the return value. */
@@ -99,11 +101,22 @@ static char* append_readme_path(const char *filename, const char *ref, const cha
 
 void cgit_print_repo_readme(char *path)
 {
-	char *filename, *ref;
+	char *filename, *ref, *mimetype;
 	int free_filename = 0;
 
-	if (ctx.repo->readme.nr == 0)
+	mimetype = get_mimetype_for_filename(path);
+	if (mimetype && (!strncmp(mimetype, "image/", 6) || !strncmp(mimetype, "video/", 6))) {
+		ctx.page.mimetype = mimetype;
+		ctx.page.charset = NULL;
+		cgit_print_plain();
+		free(mimetype);
 		return;
+	}
+	free(mimetype);
+
+	cgit_print_layout_start();
+	if (ctx.repo->readme.nr == 0)
+		goto done;
 
 	filename = ctx.repo->readme.items[0].string;
 	ref = ctx.repo->readme.items[0].util;
@@ -112,7 +125,7 @@ void cgit_print_repo_readme(char *path)
 		free_filename = 1;
 		filename = append_readme_path(filename, ref, path);
 		if (!filename)
-			return;
+			goto done;
 	}
 
 	/* Print the calculated readme, either from the git repo or from the
@@ -129,4 +142,7 @@ void cgit_print_repo_readme(char *path)
 	html("</div>");
 	if (free_filename)
 		free(filename);
+
+done:
+	cgit_print_layout_end();
 }

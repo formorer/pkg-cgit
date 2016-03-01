@@ -394,6 +394,23 @@ int mingw_fflush(FILE *stream)
 	return ret;
 }
 
+#undef write
+ssize_t mingw_write(int fd, const void *buf, size_t len)
+{
+	ssize_t result = write(fd, buf, len);
+
+	if (result < 0 && errno == EINVAL && buf) {
+		/* check if fd is a pipe */
+		HANDLE h = (HANDLE) _get_osfhandle(fd);
+		if (GetFileType(h) == FILE_TYPE_PIPE)
+			errno = EPIPE;
+		else
+			errno = EINVAL;
+	}
+
+	return result;
+}
+
 int mingw_access(const char *filename, int mode)
 {
 	wchar_t wfilename[MAX_PATH];
@@ -681,7 +698,7 @@ int pipe(int filedes[2])
 		return -1;
 	}
 	filedes[1] = _open_osfhandle((int)h[1], O_NOINHERIT);
-	if (filedes[0] < 0) {
+	if (filedes[1] < 0) {
 		close(filedes[0]);
 		CloseHandle(h[1]);
 		return -1;
@@ -2127,4 +2144,17 @@ void mingw_startup()
 
 	/* initialize Unicode console */
 	winansi_init();
+}
+
+int uname(struct utsname *buf)
+{
+	unsigned v = (unsigned)GetVersion();
+	memset(buf, 0, sizeof(*buf));
+	xsnprintf(buf->sysname, sizeof(buf->sysname), "Windows");
+	xsnprintf(buf->release, sizeof(buf->release),
+		 "%u.%u", v & 0xff, (v >> 8) & 0xff);
+	/* assuming NT variants only.. */
+	xsnprintf(buf->version, sizeof(buf->version),
+		  "%u", (v >> 16) & 0x7fff);
+	return 0;
 }

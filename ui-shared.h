@@ -1,11 +1,11 @@
 #ifndef UI_SHARED_H
 #define UI_SHARED_H
 
-extern const char *cgit_httpscheme();
-extern const char *cgit_hosturl();
-extern const char *cgit_rooturl();
-extern const char *cgit_currenturl();
-extern const char *cgit_loginurl();
+extern const char *cgit_httpscheme(void);
+extern char *cgit_hosturl(void);
+extern const char *cgit_rooturl(void);
+extern char *cgit_currenturl(void);
+extern const char *cgit_loginurl(void);
 extern char *cgit_repourl(const char *reponame);
 extern char *cgit_fileurl(const char *reponame, const char *pagename,
 			  const char *filename, const char *query);
@@ -29,7 +29,7 @@ extern void cgit_plain_link(const char *name, const char *title,
 extern void cgit_log_link(const char *name, const char *title,
 			  const char *class, const char *head, const char *rev,
 			  const char *path, int ofs, const char *grep,
-			  const char *pattern, int showmsg);
+			  const char *pattern, int showmsg, int follow);
 extern void cgit_commit_link(char *name, const char *title,
 			     const char *class, const char *head,
 			     const char *rev, const char *path);
@@ -54,6 +54,9 @@ extern void cgit_object_link(struct object *obj);
 extern void cgit_submodule_link(const char *class, char *path,
 				const char *rev);
 
+extern void cgit_print_layout_start(void);
+extern void cgit_print_layout_end(void);
+
 __attribute__((format (printf,1,2)))
 extern void cgit_print_error(const char *fmt, ...);
 __attribute__((format (printf,1,0)))
@@ -61,8 +64,11 @@ extern void cgit_vprint_error(const char *fmt, va_list ap);
 extern void cgit_print_date(time_t secs, const char *format, int local_time);
 extern void cgit_print_age(time_t t, time_t max_relative, const char *format);
 extern void cgit_print_http_headers(void);
+extern void cgit_redirect(const char *url, bool permanent);
 extern void cgit_print_docstart(void);
-extern void cgit_print_docend();
+extern void cgit_print_docend(void);
+__attribute__((format (printf,3,4)))
+extern void cgit_print_error_page(int code, const char *msg, const char *fmt, ...);
 extern void cgit_print_pageheader(void);
 extern void cgit_print_filemode(unsigned short mode);
 extern void cgit_print_snapshot_links(const char *repo, const char *head,

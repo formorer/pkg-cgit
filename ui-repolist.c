@@ -10,17 +10,18 @@
 #include "ui-repolist.h"
 #include "html.h"
 #include "ui-shared.h"
-#include <strings.h>
 
 static time_t read_agefile(char *path)
 {
 	time_t result;
 	size_t size;
-	char *buf;
+	char *buf = NULL;
 	struct strbuf date_buf = STRBUF_INIT;
 
-	if (readfile(path, &buf, &size))
+	if (readfile(path, &buf, &size)) {
+		free(buf);
 		return -1;
+	}
 
 	if (parse_date(buf, &date_buf) == 0)
 		result = strtoul(date_buf.buf, NULL, 10);
@@ -105,16 +106,38 @@ static int is_in_url(struct cgit_repo *repo)
 	return 0;
 }
 
+static int is_visible(struct cgit_repo *repo)
+{
+	if (repo->hide || repo->ignore)
+		return 0;
+	if (!(is_match(repo) && is_in_url(repo)))
+		return 0;
+	return 1;
+}
+
+static int any_repos_visible(void)
+{
+	int i;
+
+	for (i = 0; i < cgit_repolist.count; i++) {
+		if (is_visible(&cgit_repolist.repos[i]))
+			return 1;
+	}
+	return 0;
+}
+
 static void print_sort_header(const char *title, const char *sort)
 {
+	char *currenturl = cgit_currenturl();
 	html("<th class='left'><a href='");
-	html_attr(cgit_currenturl());
+	html_attr(currenturl);
 	htmlf("?s=%s", sort);
 	if (ctx.qry.search) {
 		html("&amp;q=");
 		html_url_arg(ctx.qry.search);
 	}
 	htmlf("'>%s</a></th>", title);
+	free(currenturl);
 }
 
 static void print_header(void)
@@ -254,6 +277,11 @@ void cgit_print_repolist(void)
 	char *section;
 	int sorted = 0;
 
+	if (!any_repos_visible()) {
+		cgit_print_error_page(404, "Not found", "No repositories found");
+		return;
+	}
+
 	if (ctx.cfg.enable_index_links)
 		++columns;
 	if (ctx.cfg.enable_index_owner)
@@ -275,9 +303,7 @@ void cgit_print_repolist(void)
 	html("<table summary='repository list' class='list nowrap'>");
 	for (i = 0; i < cgit_repolist.count; i++) {
 		ctx.repo = &cgit_repolist.repos[i];
-		if (ctx.repo->hide || ctx.repo->ignore)
-			continue;
-		if (!(is_match(ctx.repo) && is_in_url(ctx.repo)))
+		if (!is_visible(ctx.repo))
 			continue;
 		hits++;
 		if (hits <= ctx.qry.ofs)
@@ -330,25 +356,26 @@ void cgit_print_repolist(void)
 			html("<td>");
 			cgit_summary_link("summary", NULL, "button", NULL);
 			cgit_log_link("log", NULL, "button", NULL, NULL, NULL,
-				      0, NULL, NULL, ctx.qry.showmsg);
+				      0, NULL, NULL, ctx.qry.showmsg, 0);
 			cgit_tree_link("tree", NULL, "button", NULL, NULL, NULL);
 			html("</td>");
 		}
 		html("</tr>\n");
 	}
 	html("</table>");
-	if (!hits)
-		cgit_print_error("No repositories found");
-	else if (hits > ctx.cfg.max_repo_count)
+	if (hits > ctx.cfg.max_repo_count)
 		print_pager(hits, ctx.cfg.max_repo_count, ctx.qry.search, ctx.qry.sort);
 	cgit_print_docend();
 }
 
 void cgit_print_site_readme(void)
 {
+	cgit_print_layout_start();
 	if (!ctx.cfg.root_readme)
-		return;
+		goto done;
 	cgit_open_filter(ctx.cfg.about_filter, ctx.cfg.root_readme);
 	html_include(ctx.cfg.root_readme);
 	cgit_close_filter(ctx.cfg.about_filter);
+done:
+	cgit_print_layout_end();
 }

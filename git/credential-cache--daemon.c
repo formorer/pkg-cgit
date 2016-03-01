@@ -1,23 +1,10 @@
 #include "cache.h"
+#include "tempfile.h"
 #include "credential.h"
 #include "unix-socket.h"
-#include "sigchain.h"
 #include "parse-options.h"
 
-static const char *socket_path;
-
-static void cleanup_socket(void)
-{
-	if (socket_path)
-		unlink(socket_path);
-}
-
-static void cleanup_socket_on_signal(int sig)
-{
-	cleanup_socket();
-	sigchain_pop(sig);
-	raise(sig);
-}
+static struct tempfile socket_file;
 
 struct credential_cache_entry {
 	struct credential item;
@@ -221,7 +208,6 @@ static void serve_cache(const char *socket_path, int debug)
 		; /* nothing */
 
 	close(fd);
-	unlink(socket_path);
 }
 
 static const char permissions_advice[] =
@@ -257,6 +243,8 @@ static void check_socket_directory(const char *path)
 
 int main(int argc, const char **argv)
 {
+	const char *socket_path;
+	int ignore_sighup = 0;
 	static const char *usage[] = {
 		"git-credential-cache--daemon [opts] <socket_path>",
 		NULL
@@ -268,17 +256,22 @@ int main(int argc, const char **argv)
 		OPT_END()
 	};
 
+	git_config_get_bool("credentialcache.ignoresighup", &ignore_sighup);
+
 	argc = parse_options(argc, argv, NULL, options, usage, 0);
 	socket_path = argv[0];
 
 	if (!socket_path)
 		usage_with_options(usage, options);
-	check_socket_directory(socket_path);
 
-	atexit(cleanup_socket);
-	sigchain_push_common(cleanup_socket_on_signal);
+	check_socket_directory(socket_path);
+	register_tempfile(&socket_file, socket_path);
+
+	if (ignore_sighup)
+		signal(SIGHUP, SIG_IGN);
 
 	serve_cache(socket_path, debug);
+	delete_tempfile(&socket_file);
 
 	return 0;
 }

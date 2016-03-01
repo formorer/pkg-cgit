@@ -12,19 +12,19 @@
 #include "html.h"
 #include "ui-shared.h"
 
-static int print_ref_info(const char *refname, const unsigned char *sha1,
+static int print_ref_info(const char *refname, const struct object_id *oid,
                           int flags, void *cb_data)
 {
 	struct object *obj;
 
-	if (!(obj = parse_object(sha1)))
+	if (!(obj = parse_object(oid->hash)))
 		return 0;
 
-	htmlf("%s\t%s\n", sha1_to_hex(sha1), refname);
+	htmlf("%s\t%s\n", oid_to_hex(oid), refname);
 	if (obj->type == OBJ_TAG) {
 		if (!(obj = deref_tag(obj, refname, 0)))
 			return 0;
-		htmlf("%s\t%s^{}\n", sha1_to_hex(obj->sha1), refname);
+		htmlf("%s\t%s^{}\n", oid_to_hex(&obj->oid), refname);
 	}
 	return 0;
 }
@@ -50,20 +50,20 @@ static void print_pack_info(void)
 	}
 }
 
-static void send_file(char *path)
+static void send_file(const char *path)
 {
 	struct stat st;
 
 	if (stat(path, &st)) {
 		switch (errno) {
 		case ENOENT:
-			html_status(404, "Not found", 0);
+			cgit_print_error_page(404, "Not found", "Not found");
 			break;
 		case EACCES:
-			html_status(403, "Forbidden", 0);
+			cgit_print_error_page(403, "Forbidden", "Forbidden");
 			break;
 		default:
-			html_status(400, "Bad request", 0);
+			cgit_print_error_page(400, "Bad request", "Bad request");
 		}
 		return;
 	}
@@ -78,7 +78,7 @@ static void send_file(char *path)
 void cgit_clone_info(void)
 {
 	if (!ctx.qry.path || strcmp(ctx.qry.path, "refs")) {
-		html_status(400, "Bad request", 0);
+		cgit_print_error_page(400, "Bad request", "Bad request");
 		return;
 	}
 
@@ -91,7 +91,7 @@ void cgit_clone_info(void)
 void cgit_clone_objects(void)
 {
 	if (!ctx.qry.path) {
-		html_status(400, "Bad request", 0);
+		cgit_print_error_page(400, "Bad request", "Bad request");
 		return;
 	}
 
