@@ -3,8 +3,6 @@
 # This is manually managed by users with dquilt (quilt(1) wrapper) etc.
 # Also this may be updated by dpkg-source(1) when making a package.
 debianize_makefile
-fix_status_code_for_unknown_repos
-hardening
 assume-highlight-version-3-in-filter-script
 add-highlighting-rules-to-cgit.css
 Use-debian-binary-name-rst2html
