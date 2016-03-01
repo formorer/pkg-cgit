@@ -1,10 +1,11 @@
-cgit (0.12.0.git2.7.0-1~1.gbp8784d9) UNRELEASED; urgency=medium
+cgit (0.12.0.git2.7.0-1~1.gbp8784d9) unstable; urgency=medium
 
   * [4f86c67] Bump standards version
   * [762d2b1] don't use pedantic
   * New upstream version 0.12.0 with git 2.7.0
+  * [9edaddc] Remove unused patch
 
- -- Alexander Wirt <formorer@debian.org>  Tue, 01 Mar 2016 13:53:34 +0100
+ -- Alexander Wirt <formorer@debian.org>  Tue, 01 Mar 2016 14:10:45 +0100
 
 cgit (0.11.2.git2.3.2-1.1) unstable; urgency=medium
 
