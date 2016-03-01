@@ -1,0 +1,16 @@
+--- a/Makefile
++++ b/Makefile
+@@ -2,11 +2,11 @@
+ 
+ CGIT_VERSION = v0.12
+ CGIT_SCRIPT_NAME = cgit.cgi
+-CGIT_SCRIPT_PATH = /var/www/htdocs/cgit
++CGIT_SCRIPT_PATH = /usr/share/cgit
+ CGIT_DATA_PATH = $(CGIT_SCRIPT_PATH)
+ CGIT_CONFIG = /etc/cgitrc
+ CACHE_ROOT = /var/cache/cgit
+-prefix = /usr/local
++prefix = /usr
+ libdir = $(prefix)/lib
+ filterdir = $(libdir)/cgit/filters
+ docdir = $(prefix)/share/doc/cgit

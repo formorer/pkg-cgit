@@ -1,0 +1,53 @@
+#!/usr/bin/make -f
+# See debhelper(7) (uncomment to enable)
+# output every command that modifies files on the build system.
+#DH_VERBOSE = 1
+
+# see EXAMPLES in dpkg-buildflags(1) and read /usr/share/dpkg/*
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/default.mk
+
+CC =gcc
+CPPFLAGS :=$(shell dpkg-buildflags --get CPPFLAGS)
+CFLAGS :=-Wall $(shell dpkg-buildflags --get CFLAGS) $(CPPFLAGS)
+CGIT_CFLAGS :=-Wall $(shell dpkg-buildflags --get CFLAGS) $(CPPFLAGS)
+LDFLAGS :=$(shell dpkg-buildflags --get LDFLAGS)
+
+# see FEATURE AREAS in dpkg-buildflags(1)
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# see ENVIRONMENT in dpkg-buildflags(1)
+# package maintainers to append CFLAGS
+export DEB_CFLAGS_MAINT_APPEND  = -Wall -pedantic
+# package maintainers to append LDFLAGS
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+
+
+b := $(shell pwd)/debian/cgit/
+
+# main packaging script based on dh7 syntax
+%:
+	dh $@ --with apache2 
+
+override_dh_auto_clean:
+	dh_auto_clean
+	make cleanall
+	-rm tests/test-results/*.counts
+	-rm -rf .depend
+	-rm cgitrc.5 
+
+override_dh_auto_build:
+	dh_auto_build
+	a2x -f manpage cgitrc.5.txt
+
+override_dh_auto_install:
+	dh_auto_install
+	mv $b/usr/share/cgit/cgit.cgi $b/usr/lib/cgit
+
+override_dh_auto_test:
+	chmod +x tests/*.sh
+	dh_auto_test
+
+override_dh_fixperms:
+	dh_fixperms
+	chown www-data:www-data $b/var/cache/cgit
