@@ -6,7 +6,6 @@
  *   (see COPYING for full license text)
  */
 
-#include <stdio.h>
 #include "cgit.h"
 #include "ui-plain.h"
 #include "html.h"
@@ -17,81 +16,37 @@ struct walk_tree_context {
 	int match;
 };
 
-static char *get_mimetype_from_file(const char *filename, const char *ext)
-{
-	static const char *delimiters;
-	char *result;
-	FILE *fd;
-	char line[1024];
-	char *mimetype;
-	char *token;
-
-	if (!filename)
-		return NULL;
-
-	fd = fopen(filename, "r");
-	if (!fd)
-		return NULL;
-
-	delimiters = " \t\r\n";
-	result = NULL;
-
-	/* loop over all lines in the file */
-	while (!result && fgets(line, sizeof(line), fd)) {
-		mimetype = strtok(line, delimiters);
-
-		/* skip empty lines and comment lines */
-		if (!mimetype || (mimetype[0] == '#'))
-			continue;
-
-		/* loop over all extensions of mimetype */
-		while ((token = strtok(NULL, delimiters))) {
-			if (!strcasecmp(ext, token)) {
-				result = xstrdup(mimetype);
-				break;
-			}
-		}
-	}
-	fclose(fd);
-
-	return result;
-}
-
 static int print_object(const unsigned char *sha1, const char *path)
 {
 	enum object_type type;
-	char *buf, *ext;
+	char *buf, *mimetype;
 	unsigned long size;
-	struct string_list_item *mime;
-	int freemime;
 
 	type = sha1_object_info(sha1, &size);
 	if (type == OBJ_BAD) {
-		html_status(404, "Not found", 0);
+		cgit_print_error_page(404, "Not found", "Not found");
 		return 0;
 	}
 
 	buf = read_sha1_file(sha1, &type, &size);
 	if (!buf) {
-		html_status(404, "Not found", 0);
+		cgit_print_error_page(404, "Not found", "Not found");
 		return 0;
 	}
-	ctx.page.mimetype = NULL;
-	ext = strrchr(path, '.');
-	freemime = 0;
-	if (ext && *(++ext)) {
-		mime = string_list_lookup(&ctx.cfg.mimetypes, ext);
-		if (mime) {
-			ctx.page.mimetype = (char *)mime->util;
-			ctx.page.charset = NULL;
-		} else {
-			ctx.page.mimetype = get_mimetype_from_file(ctx.cfg.mimetype_file, ext);
-			if (ctx.page.mimetype) {
-				freemime = 1;
-				ctx.page.charset = NULL;
-			}
+
+	mimetype = get_mimetype_for_filename(path);
+	ctx.page.mimetype = mimetype;
+
+	if (!ctx.repo->enable_html_serving) {
+		html("X-Content-Type-Options: nosniff\n");
+		html("Content-Security-Policy: default-src 'none'\n");
+		if (mimetype) {
+			/* Built-in white list allows PDF and everything that isn't text/ and application/ */
+			if ((!strncmp(mimetype, "text/", 5) || !strncmp(mimetype, "application/", 12)) && strcmp(mimetype, "application/pdf"))
+				ctx.page.mimetype = NULL;
 		}
 	}
+
 	if (!ctx.page.mimetype) {
 		if (buffer_is_binary(buf, size)) {
 			ctx.page.mimetype = "application/octet-stream";
@@ -105,9 +60,8 @@ static int print_object(const unsigned char *sha1, const char *path)
 	ctx.page.etag = sha1_to_hex(sha1);
 	cgit_print_http_headers();
 	html_raw(buf, size);
-	/* If we allocated this, then casting away const is safe. */
-	if (freemime)
-		free((char*) ctx.page.mimetype);
+	free(mimetype);
+	free(buf);
 	return 1;
 }
 
@@ -140,8 +94,10 @@ static void print_dir(const unsigned char *sha1, const char *base,
 		slash = strrchr(fullpath, '/');
 		if (slash)
 			*(slash + 1) = 0;
-		else
+		else {
+			free(fullpath);
 			fullpath = NULL;
+		}
 		html("<li>");
 		cgit_plain_link("../", NULL, NULL, ctx.qry.head, ctx.qry.sha1,
 				fullpath);
@@ -226,25 +182,25 @@ void cgit_print_plain(void)
 		rev = ctx.qry.head;
 
 	if (get_sha1(rev, sha1)) {
-		html_status(404, "Not found", 0);
+		cgit_print_error_page(404, "Not found", "Not found");
 		return;
 	}
 	commit = lookup_commit_reference(sha1);
 	if (!commit || parse_commit(commit)) {
-		html_status(404, "Not found", 0);
+		cgit_print_error_page(404, "Not found", "Not found");
 		return;
 	}
 	if (!path_items.match) {
 		path_items.match = "";
 		walk_tree_ctx.match_baselen = -1;
-		print_dir(commit->tree->object.sha1, "", 0, "");
+		print_dir(commit->tree->object.oid.hash, "", 0, "");
 		walk_tree_ctx.match = 2;
 	}
 	else
 		walk_tree_ctx.match_baselen = basedir_len(path_items.match);
 	read_tree_recursive(commit->tree, "", 0, 0, &paths, walk_tree, &walk_tree_ctx);
 	if (!walk_tree_ctx.match)
-		html_status(404, "Not found", 0);
+		cgit_print_error_page(404, "Not found", "Not found");
 	else if (walk_tree_ctx.match == 2)
 		print_dir_tail();
 }

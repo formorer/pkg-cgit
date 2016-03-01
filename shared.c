@@ -7,7 +7,6 @@
  */
 
 #include "cgit.h"
-#include <stdio.h>
 
 struct cgit_repolist cgit_repolist;
 struct cgit_context ctx;
@@ -62,6 +61,7 @@ struct cgit_repo *cgit_add_repo(const char *url)
 	ret->enable_log_linecount = ctx.cfg.enable_log_linecount;
 	ret->enable_remote_branches = ctx.cfg.enable_remote_branches;
 	ret->enable_subject_links = ctx.cfg.enable_subject_links;
+	ret->enable_html_serving = ctx.cfg.enable_html_serving;
 	ret->max_stats = ctx.cfg.max_stats;
 	ret->branch_sort = ctx.cfg.branch_sort;
 	ret->commit_sort = ctx.cfg.commit_sort;
@@ -185,13 +185,13 @@ void cgit_add_ref(struct reflist *list, struct refinfo *ref)
 	list->refs[list->count++] = ref;
 }
 
-static struct refinfo *cgit_mk_refinfo(const char *refname, const unsigned char *sha1)
+static struct refinfo *cgit_mk_refinfo(const char *refname, const struct object_id *oid)
 {
 	struct refinfo *ref;
 
 	ref = xmalloc(sizeof (struct refinfo));
 	ref->refname = xstrdup(refname);
-	ref->object = parse_object(sha1);
+	ref->object = parse_object(oid->hash);
 	switch (ref->object->type) {
 	case OBJ_TAG:
 		ref->tag = cgit_parse_tag((struct tag *)ref->object);
@@ -239,19 +239,19 @@ void cgit_free_reflist_inner(struct reflist *list)
 	free(list->refs);
 }
 
-int cgit_refs_cb(const char *refname, const unsigned char *sha1, int flags,
+int cgit_refs_cb(const char *refname, const struct object_id *oid, int flags,
 		  void *cb_data)
 {
 	struct reflist *list = (struct reflist *)cb_data;
-	struct refinfo *info = cgit_mk_refinfo(refname, sha1);
+	struct refinfo *info = cgit_mk_refinfo(refname, oid);
 
 	if (info)
 		cgit_add_ref(list, info);
 	return 0;
 }
 
-static void cgit_diff_tree_cb(struct diff_queue_struct *q,
-			      struct diff_options *options, void *data)
+void cgit_diff_tree_cb(struct diff_queue_struct *q,
+		       struct diff_options *options, void *data)
 {
 	int i;
 
@@ -403,8 +403,8 @@ void cgit_diff_commit(struct commit *commit, filepair_fn fn, const char *prefix)
 	unsigned char *old_sha1 = NULL;
 
 	if (commit->parents)
-		old_sha1 = commit->parents->item->object.sha1;
-	cgit_diff_tree(old_sha1, commit->object.sha1, fn, prefix,
+		old_sha1 = commit->parents->item->object.oid.hash;
+	cgit_diff_tree(old_sha1, commit->object.oid.hash, fn, prefix,
 		       ctx.qry.ignorews);
 }
 
@@ -560,4 +560,43 @@ char *expand_macros(const char *txt)
 		*p = '\0';
 	}
 	return result;
+}
+
+char *get_mimetype_for_filename(const char *filename)
+{
+	char *ext, *mimetype, *token, line[1024], *saveptr;
+	FILE *file;
+	struct string_list_item *mime;
+
+	if (!filename)
+		return NULL;
+
+	ext = strrchr(filename, '.');
+	if (!ext)
+		return NULL;
+	++ext;
+	if (!ext[0])
+		return NULL;
+	mime = string_list_lookup(&ctx.cfg.mimetypes, ext);
+	if (mime)
+		return xstrdup(mime->util);
+
+	if (!ctx.cfg.mimetype_file)
+		return NULL;
+	file = fopen(ctx.cfg.mimetype_file, "r");
+	if (!file)
+		return NULL;
+	while (fgets(line, sizeof(line), file)) {
+		if (!line[0] || line[0] == '#')
+			continue;
+		mimetype = strtok_r(line, " \t\r\n", &saveptr);
+		while ((token = strtok_r(NULL, " \t\r\n", &saveptr))) {
+			if (!strcasecmp(ext, token)) {
+				fclose(file);
+				return xstrdup(mimetype);
+			}
+		}
+	}
+	fclose(file);
+	return NULL;
 }

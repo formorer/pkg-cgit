@@ -1,2 +1,0 @@
-cgit: python-script-but-no-python-dep usr/lib/cgit/filters/syntax-highlighting.py
-cgit: python-script-but-no-python-dep usr/lib/cgit/filters/email-gravatar.py

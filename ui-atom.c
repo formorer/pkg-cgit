@@ -19,7 +19,7 @@ static void add_entry(struct commit *commit, const char *host)
 	struct commitinfo *info;
 
 	info = cgit_parse_commit(commit);
-	hex = sha1_to_hex(commit->object.sha1);
+	hex = oid_to_hex(&commit->object.oid);
 	html("<entry>\n");
 	html("<title>");
 	html_txt(info->subject);
@@ -53,14 +53,17 @@ static void add_entry(struct commit *commit, const char *host)
 	cgit_print_date(info->author_date, FMT_ATOMDATE, 0);
 	html("</published>\n");
 	if (host) {
+		char *pageurl;
 		html("<link rel='alternate' type='text/html' href='");
 		html(cgit_httpscheme());
 		html_attr(host);
-		html_attr(cgit_pageurl(ctx.repo->url, "commit", NULL));
+		pageurl = cgit_pageurl(ctx.repo->url, "commit", NULL);
+		html_attr(pageurl);
 		if (ctx.cfg.virtual_root)
 			delim = '?';
 		htmlf("%cid=%s", delim, hex);
 		html("'/>\n");
+		free(pageurl);
 	}
 	htmlf("<id>%s</id>\n", hex);
 	html("<content type='text'>\n");
@@ -80,7 +83,7 @@ static void add_entry(struct commit *commit, const char *host)
 
 void cgit_print_atom(char *tip, char *path, int max_count)
 {
-	const char *host;
+	char *host;
 	const char *argv[] = {NULL, tip, NULL, NULL, NULL};
 	struct commit *commit;
 	struct rev_info rev;
@@ -125,11 +128,13 @@ void cgit_print_atom(char *tip, char *path, int max_count)
 	html_txt(ctx.repo->desc);
 	html("</subtitle>\n");
 	if (host) {
+		char *repourl = cgit_repourl(ctx.repo->url);
 		html("<link rel='alternate' type='text/html' href='");
 		html(cgit_httpscheme());
 		html_attr(host);
-		html_attr(cgit_repourl(ctx.repo->url));
+		html_attr(repourl);
 		html("'/>\n");
+		free(repourl);
 	}
 	while ((commit = get_revision(&rev)) != NULL) {
 		add_entry(commit, host);
@@ -138,4 +143,5 @@ void cgit_print_atom(char *tip, char *path, int max_count)
 		commit->parents = NULL;
 	}
 	html("</feed>\n");
+	free(host);
 }

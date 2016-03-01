@@ -85,7 +85,7 @@ int cgit_print_file(char *path, const char *head, int file_only)
 	if (get_sha1(head, sha1))
 		return -1;
 	type = sha1_object_info(sha1, &size);
-	if (type == OBJ_COMMIT && path) {
+	if (type == OBJ_COMMIT) {
 		commit = lookup_commit_reference(sha1);
 		read_tree_recursive(commit->tree, "", 0, 0, &paths, walk_tree, &walk_tree_ctx);
 		if (!walk_tree_ctx.found_path)
@@ -99,6 +99,7 @@ int cgit_print_file(char *path, const char *head, int file_only)
 		return -1;
 	buf[size] = '\0';
 	html_raw(buf, size);
+	free(buf);
 	return 0;
 }
 
@@ -126,12 +127,14 @@ void cgit_print_blob(const char *hex, char *path, const char *head, int file_onl
 
 	if (hex) {
 		if (get_sha1_hex(hex, sha1)) {
-			cgit_print_error("Bad hex value: %s", hex);
+			cgit_print_error_page(400, "Bad request",
+					"Bad hex value: %s", hex);
 			return;
 		}
 	} else {
 		if (get_sha1(head, sha1)) {
-			cgit_print_error("Bad ref: %s", head);
+			cgit_print_error_page(404, "Not found",
+					"Bad ref: %s", head);
 			return;
 		}
 	}
@@ -145,25 +148,28 @@ void cgit_print_blob(const char *hex, char *path, const char *head, int file_onl
 	}
 
 	if (type == OBJ_BAD) {
-		cgit_print_error("Bad object name: %s", hex);
+		cgit_print_error_page(404, "Not found",
+				"Bad object name: %s", hex);
 		return;
 	}
 
 	buf = read_sha1_file(sha1, &type, &size);
 	if (!buf) {
-		cgit_print_error("Error reading object %s", hex);
+		cgit_print_error_page(500, "Internal server error",
+				"Error reading object %s", hex);
 		return;
 	}
 
 	buf[size] = '\0';
-	ctx.page.mimetype = ctx.qry.mimetype;
-	if (!ctx.page.mimetype) {
-		if (buffer_is_binary(buf, size))
-			ctx.page.mimetype = "application/octet-stream";
-		else
-			ctx.page.mimetype = "text/plain";
-	}
+	if (buffer_is_binary(buf, size))
+		ctx.page.mimetype = "application/octet-stream";
+	else
+		ctx.page.mimetype = "text/plain";
 	ctx.page.filename = path;
+
+	html("X-Content-Type-Options: nosniff\n");
+	html("Content-Security-Policy: default-src 'none'\n");
 	cgit_print_http_headers();
 	html_raw(buf, size);
+	free(buf);
 }
